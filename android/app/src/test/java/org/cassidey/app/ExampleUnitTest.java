@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package org.cassidey.app;
 
 import static org.junit.Assert.*;
 
