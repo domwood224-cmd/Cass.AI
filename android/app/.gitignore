@@ -1,2 +1,21 @@
 /build/*
 !/build/.npmkeep
+
+# Output files
+*.apk
+*.aab
+*.ap_
+
+# Proguard
+proguard/
+
+# Generated native builds
+.externalNativeBuild/
+.cxx/
+
+# Local config
+local.properties
+
+# Capture files
+captures/
+*.hprof
