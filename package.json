@@ -3,19 +3,31 @@
   "private": true,
   "version": "2.0.4",
   "type": "module",
+  "description": "Cassidey AI Assistant — A React + Capacitor hybrid app with Gemini AI integration, skill tree system, and D3.js knowledge graph visualization",
+  "author": "mrsaggynutz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrsaggynutz/https-github.com-mrsaggynutz-Cassidey.git"
+  },
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "cap:sync": "cap sync",
+    "cap:android": "cap open android",
+    "android:build": "npm run build && npm run cap:sync"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
     "@capacitor/core": "^8.3.1",
-    "@google/genai": "^1.29.0",
-    "@tailwindcss/vite": "^4.1.14",
-    "@vitejs/plugin-react": "^5.0.4",
+    "@google/genai": "^1.50.0",
     "clsx": "^2.1.1",
     "d3": "^7.9.0",
     "lucide-react": "^0.546.0",
@@ -26,8 +38,10 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.1",
+    "@tailwindcss/vite": "^4.1.14",
     "@types/d3": "^7.4.3",
     "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.4",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
