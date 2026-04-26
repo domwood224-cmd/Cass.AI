@@ -31,6 +31,7 @@ import { cn } from './lib/utils';
 import { Skill, SkillCategory, LearningState, LearningType } from './types';
 import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer';
 import { chatWithCassidey, isGeminiConfigured, setGeminiApiKey, getStoredGeminiKey } from './lib/gemini';
+import { checkForUpdate, downloadUpdate, triggerInstall, formatBytes, UpdateInfo, UpdateStatus } from './lib/updater';
 
 // Proper mapping from LearningType to SkillCategory for XP rewards
 const LEARNING_TYPE_TO_CATEGORY: Record<string, SkillCategory> = {
@@ -65,6 +66,13 @@ export default function App() {
   const [apiKeyInput, setApiKeyInput] = useState(() => getStoredGeminiKey() || '');
   const [apiSaved, setApiSaved] = useState(false);
   const [showApiSaved, setShowApiSaved] = useState(false);
+
+  // Auto-updater state
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateError, setUpdateError] = useState('');
+  const [showUpdateBanner, setShowUpdateBanner] = useState(true);
 
   // Persist messages safely
   useEffect(() => {
@@ -155,6 +163,53 @@ export default function App() {
     setTimeout(() => setShowApiSaved(false), 2000);
   }, [apiKeyInput]);
 
+  // Check for updates on startup (native Android only)
+  useEffect(() => {
+    const checkUpdate = async () => {
+      try {
+        // @ts-expect-error Capacitor global
+        if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform()) {
+          setUpdateStatus('checking');
+          const info = await checkForUpdate();
+          setUpdateInfo(info);
+          if (info.available) {
+            setUpdateStatus('available');
+          } else {
+            setUpdateStatus('not_available');
+          }
+        }
+      } catch (err) {
+        console.error('Update check failed:', err);
+        setUpdateStatus('idle');
+      }
+    };
+    checkUpdate();
+  }, []);
+
+  const handleDownloadUpdate = useCallback(async () => {
+    if (!updateInfo?.downloadUrl) return;
+    try {
+      setUpdateStatus('downloading');
+      setDownloadProgress(0);
+      setUpdateError('');
+      await downloadUpdate(updateInfo.downloadUrl, (pct) => setDownloadProgress(pct));
+      setUpdateStatus('downloaded');
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : 'Download failed');
+      setUpdateStatus('error');
+    }
+  }, [updateInfo]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    try {
+      setUpdateStatus('installing');
+      await triggerInstall();
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : 'Install failed');
+      setUpdateStatus('error');
+    }
+  }, []);
+
   const handleResetAll = useCallback(() => {
     learningEngine.reset();
     skillManager.reset();
@@ -166,6 +221,74 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 overflow-hidden font-sans">
+      {/* Update Available Banner */}
+      {updateStatus === 'available' && showUpdateBanner && updateInfo && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-indigo-600 border-b border-indigo-500 px-4 py-2.5 flex items-center justify-between z-50 shrink-0"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Download className="w-4 h-4 text-white shrink-0" />
+            <span className="text-xs text-white font-medium truncate">
+              v{updateInfo.latestVersion} available
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleDownloadUpdate}
+              className="px-3 py-1 text-[11px] font-bold bg-white text-indigo-600 rounded-lg active:scale-95 transition-transform"
+            >
+              Update
+            </button>
+            <button
+              onClick={() => setShowUpdateBanner(false)}
+              className="p-1 text-white/60 hover:text-white transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Download Progress Banner */}
+      {(updateStatus === 'downloading' || updateStatus === 'downloaded') && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 z-50 shrink-0"
+        >
+          <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium text-zinc-300">
+            {updateStatus === 'downloaded' ? 'Download complete!' : `Downloading... ${downloadProgress}%`}
+          </span>
+          {updateStatus === 'downloaded' && (
+            <button
+              onClick={handleInstallUpdate}
+              className="px-3 py-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg active:scale-95 transition-all"
+            >
+              Install Now
+            </button>
+          )}
+          </div>
+          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <motion.div
+              animate={{ width: `${updateStatus === 'downloaded' ? 100 : downloadProgress}%` }}
+              transition={{ duration: 0.3 }}
+              className={`h-full rounded-full ${updateStatus === 'downloaded' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+            />
+          </div>
+        </motion.div>
+      )}
+
+      {/* Update Error Banner */}
+      {updateStatus === 'error' && updateError && (
+        <div className="bg-red-900/50 border-b border-red-800 px-4 py-2.5 flex items-center justify-between z-50 shrink-0">
+          <span className="text-xs text-red-300 truncate">{updateError}</span>
+          <button onClick={() => setUpdateStatus('idle')} className="text-red-400 text-xs font-bold ml-2 shrink-0">Dismiss</button>
+        </div>
+      )}
+
       {/* Mobile Top Header */}
       <header className="h-20 pt-4 border-b border-zinc-900 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-xl z-30 shrink-0 safe-area-top">
         <div className="flex items-center gap-3">
@@ -522,6 +645,118 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {/* App Updates */}
+                  <div className="glass-panel rounded-[2rem] p-6 border-zinc-800/50 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-indigo-900/20 text-indigo-400">
+                        <Download className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-bold text-white">App Updates</h3>
+                        <p className="text-[11px] text-zinc-500">Check for new versions and install in-app.</p>
+                      </div>
+                      {updateStatus === 'not_available' && (
+                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
+                      <div>
+                        <span className="text-[10px] text-zinc-600 uppercase tracking-widest block">Current Version</span>
+                        <span className="text-sm font-mono text-zinc-300">v{updateInfo?.currentVersion || '2.0.4'}</span>
+                      </div>
+                      {updateInfo?.latestVersion && (
+                        <div className="text-right">
+                          <span className="text-[10px] text-zinc-600 uppercase tracking-widest block">Latest</span>
+                          <span className={`text-sm font-mono ${updateInfo.available ? 'text-indigo-400' : 'text-zinc-400'}`}>
+                            v{updateInfo.latestVersion}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {updateStatus === 'available' && updateInfo && (
+                      <div className="p-3 rounded-xl bg-indigo-900/10 border border-indigo-500/20 space-y-2">
+                        <p className="text-[11px] text-indigo-300">
+                          Update to <span className="font-bold">v{updateInfo.latestVersion}</span>
+                          {updateInfo.apkSize > 0 && (
+                            <span className="text-zinc-500"> ({formatBytes(updateInfo.apkSize)})</span>
+                          )}
+                        </p>
+                        {updateInfo.releaseNotes && (
+                          <p className="text-[10px] text-zinc-500 line-clamp-3 whitespace-pre-wrap">{updateInfo.releaseNotes}</p>
+                        )}
+                        <button
+                          onClick={handleDownloadUpdate}
+                          className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download Update
+                        </button>
+                      </div>
+                    )}
+
+                    {updateStatus === 'downloading' && (
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-zinc-400">Downloading update...</span>
+                          <span className="text-indigo-400 font-mono">{downloadProgress}%</span>
+                        </div>
+                        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <motion.div
+                            animate={{ width: `${downloadProgress}%` }}
+                            className="h-full bg-indigo-500 rounded-full"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {updateStatus === 'downloaded' && (
+                      <button
+                        onClick={handleInstallUpdate}
+                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Install Update Now
+                      </button>
+                    )}
+
+                    {updateStatus === 'error' && updateError && (
+                      <div className="p-3 rounded-xl bg-red-900/10 border border-red-500/20 flex items-start gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-[11px] text-red-300">{updateError}</p>
+                          <button
+                            onClick={() => { setUpdateStatus('idle'); setUpdateError(''); }}
+                            className="text-[10px] text-red-400 underline mt-1"
+                          >Dismiss</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {(updateStatus === 'idle' || updateStatus === 'not_available' || updateStatus === 'checking') && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            setUpdateStatus('checking');
+                            setUpdateError('');
+                            const info = await checkForUpdate();
+                            setUpdateInfo(info);
+                            setUpdateStatus(info.available ? 'available' : 'not_available');
+                          } catch (err) {
+                            setUpdateError(err instanceof Error ? err.message : 'Check failed');
+                            setUpdateStatus('error');
+                          }
+                        }}
+                        disabled={updateStatus === 'checking'}
+                        className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${updateStatus === 'checking' ? 'animate-spin' : ''}`} />
+                        {updateStatus === 'checking' ? 'Checking...' : 'Check for Updates'}
+                      </button>
+                    )}
                   </div>
 
                   {/* About */}
