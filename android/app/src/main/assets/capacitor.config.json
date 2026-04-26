@@ -1,0 +1,5 @@
+{
+	"appId": "org.cassidey.app",
+	"appName": "cassidey",
+	"webDir": "dist"
+}

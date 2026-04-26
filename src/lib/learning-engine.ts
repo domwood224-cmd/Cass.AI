@@ -39,8 +39,10 @@ export class AdvancedLearningEngine {
           for (const [k, v] of data.vocabulary) {
             if (typeof v === 'number') {
               // Legacy migration
-              vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [] });
+              vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [], nuance: 0.5 });
             } else {
+              if (v.nuance === undefined) v.nuance = 0.5; // fallback
+              if (v.coOccurrences === undefined) v.coOccurrences = {};
               vocabMap.set(k, v);
             }
           }
@@ -51,6 +53,17 @@ export class AdvancedLearningEngine {
         console.error("Failed to load learning progress", e);
       }
     }
+  }
+
+  public reset() {
+    this.nodes.clear();
+    this.edges = [];
+    this.conceptMastery = {};
+    this.iterations = 0;
+    this.vocabulary.clear();
+    this.conversationContext = [];
+    this.initializeMastery();
+    localStorage.removeItem('cassidey_learning_progress');
   }
 
   private initializeMastery() {
@@ -68,6 +81,7 @@ export class AdvancedLearningEngine {
     // Calculate aggregated sentiment from words
     const words = lower.match(/\b\w+\b/g) || [];
     let avgSentiment = 0;
+    let avgNuance = 0;
     let knownWordsCount = 0;
     const recognizedConcepts = new Set<string>();
 
@@ -75,11 +89,15 @@ export class AdvancedLearningEngine {
       const wData = this.vocabulary.get(w);
       if (wData) {
         avgSentiment += wData.sentiment;
+        avgNuance += (wData.nuance !== undefined ? wData.nuance : 0.5);
         knownWordsCount++;
         wData.associatedConcepts.forEach(c => recognizedConcepts.add(c));
       }
     });
-    if (knownWordsCount > 0) avgSentiment /= knownWordsCount;
+    if (knownWordsCount > 0) {
+      avgSentiment /= knownWordsCount;
+      avgNuance /= knownWordsCount;
+    }
 
     // Context tracking
     const lastContext = this.conversationContext.length > 0 ? this.conversationContext[this.conversationContext.length - 1] : null;
@@ -138,7 +156,14 @@ export class AdvancedLearningEngine {
     }
 
     if (recognizedConcepts.size > 0 && avgSentiment > 0.5) {
+      if (avgNuance > 0.8) {
+        return `I love where this is going! We're building strong associations with things like ${Array.from(recognizedConcepts)[0]}, and your sophisticated usage of words gives me a lot of nuanced context. Keep it coming!`;
+      }
       return `I love where this is going! We're building strong associations with things like ${Array.from(recognizedConcepts)[0]}. Keep it coming!`;
+    }
+
+    if (avgNuance > 0.8) {
+        return `That is a particularly nuanced point. I'm storing these intricate conceptual edges as we speak.`;
     }
 
     const fallbacks = [
@@ -163,30 +188,56 @@ export class AdvancedLearningEngine {
     // Update mastery
     this.conceptMastery[type] = Math.min(1, this.conceptMastery[type] + improvement);
 
+    // Extract "Knowledge" (Simplified)
+    const entities = this.extractEntities(input);
+
     // Track vocabulary and sentiment
     const words = input.toLowerCase().match(/\b\w+\b/g) || [];
+    const uniqueWordsInContext = Array.from(new Set(words));
     const simulatedSentiment = this.analyzeSentiment(input);
+    const baseNuance = Math.min(1.0, (input.length / 100) + (uniqueWordsInContext.length / 20)); // basic complexity metric
 
-    words.forEach(w => {
-      const existing = this.vocabulary.get(w);
-      if (existing) {
-        existing.frequency++;
-        // Moving average approach for sentiment
-        existing.sentiment = (existing.sentiment * 0.8) + (simulatedSentiment * 0.2);
-        // Add new concepts
-        entities.forEach(e => {
-          if (!existing.associatedConcepts.includes(e)) {
-            existing.associatedConcepts.push(e);
-          }
-        });
-      } else {
-        this.vocabulary.set(w, {
+    uniqueWordsInContext.forEach(w => {
+      let existing = this.vocabulary.get(w);
+      
+      if (!existing) {
+        existing = {
           word: w,
-          frequency: 1,
+          frequency: 0,
           sentiment: simulatedSentiment,
-          associatedConcepts: [...entities]
-        });
+          associatedConcepts: [...entities],
+          nuance: baseNuance,
+          coOccurrences: {}
+        };
+        this.vocabulary.set(w, existing);
       }
+
+      existing.frequency++;
+      existing.sentiment = (existing.sentiment * 0.8) + (simulatedSentiment * 0.2);
+      
+      let nuanceBoost = baseNuance;
+
+      // Track word co-occurrence patterns and enrich nuance
+      uniqueWordsInContext.forEach(otherWord => {
+        if (w !== otherWord) {
+          existing!.coOccurrences[otherWord] = (existing!.coOccurrences[otherWord] || 0) + 1;
+          
+          // Boost nuance if co-occuring with less frequent words (indicates richer vocabulary)
+          const otherWordData = this.vocabulary.get(otherWord);
+          if (otherWordData && otherWordData.frequency < 5) {
+             nuanceBoost += 0.05;
+          }
+        }
+      });
+      
+      existing.nuance = Math.min(1.0, (existing.nuance * 0.8) + (nuanceBoost * 0.2));
+
+      // Add new concepts
+      entities.forEach(e => {
+        if (!existing!.associatedConcepts.includes(e)) {
+          existing!.associatedConcepts.push(e);
+        }
+      });
     });
 
     // Update conversation context
@@ -197,8 +248,6 @@ export class AdvancedLearningEngine {
     }
     if (this.conversationContext.length > 10) this.conversationContext.shift();
 
-    // Extract "Knowledge" (Simplified)
-    const entities = this.extractEntities(input);
     const knowledge = entities.length > 0 ? `Connected ${entities.join(', ')} to context.` : `Gained nuance in ${type}. Vocabulary: ${this.vocabulary.size} words.`;
     
     // Add to knowledge graph

@@ -39,6 +39,15 @@ export class SkillTreeManager {
     }
   }
 
+  public reset() {
+    this.skillTree.forEach(skill => {
+      skill.level = 0;
+      skill.xp = 0;
+    });
+    this.unlockedSkillIds.clear();
+    localStorage.removeItem('cassidey_skill_progress');
+  }
+
   public saveLocalProgress() {
     localStorage.setItem('cassidey_skill_progress', this.exportProgress());
   }

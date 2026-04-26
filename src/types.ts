@@ -70,6 +70,8 @@ export interface WordData {
   frequency: number;
   sentiment: number;
   associatedConcepts: string[];
+  nuance: number;
+  coOccurrences: Record<string, number>;
 }
 
 export interface LearningState {
