@@ -34,7 +34,7 @@ export class SkillTreeManager {
       }
       return false;
     } catch (e) {
-      console.error("Failed to parse progress", e);
+      console.error("Failed to parse progress:", e);
       return false;
     }
   }
@@ -45,17 +45,29 @@ export class SkillTreeManager {
       skill.xp = 0;
     });
     this.unlockedSkillIds.clear();
-    localStorage.removeItem('cassidey_skill_progress');
+    try {
+      localStorage.removeItem('cassidey_skill_progress');
+    } catch (e) {
+      console.error("Failed to clear skill progress:", e);
+    }
   }
 
   public saveLocalProgress() {
-    localStorage.setItem('cassidey_skill_progress', this.exportProgress());
+    try {
+      localStorage.setItem('cassidey_skill_progress', this.exportProgress());
+    } catch (e) {
+      console.error("Failed to save skill progress:", e);
+    }
   }
 
   public loadLocalProgress() {
-    const data = localStorage.getItem('cassidey_skill_progress');
-    if (data) {
-      this.importProgress(data);
+    try {
+      const data = localStorage.getItem('cassidey_skill_progress');
+      if (data) {
+        this.importProgress(data);
+      }
+    } catch (e) {
+      console.error("Failed to load skill progress:", e);
     }
   }
 

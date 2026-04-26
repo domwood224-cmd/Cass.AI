@@ -7,65 +7,73 @@ export function KnowledgeGraphVisualizer({ data }: { data: { nodes: any[], edges
   
   useEffect(() => {
     if (!containerRef.current || data.nodes.length === 0) return;
-    const width = containerRef.current.clientWidth;
-    const height = 400;
-    
-    d3.select(containerRef.current).selectAll('*').remove();
-    
-    const svg = d3.select(containerRef.current)
-      .append('svg')
-      .attr('width', '100%')
-      .attr('height', '100%')
-      .attr('viewBox', `0 0 ${width} ${height}`);
 
-    const nodes = data.nodes.map(d => Object.create(d));
-    const links = data.edges.map(d => Object.create(d));
+    const container = containerRef.current;
 
-    const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id((d: any) => d.id).distance(120))
-      .force('charge', d3.forceManyBody().strength(-400))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide().radius(40));
+    function buildGraph() {
+      if (!container) return;
+      const width = container.clientWidth;
+      const height = 400;
+      
+      d3.select(container).selectAll('*').remove();
+      
+      const svg = d3.select(container)
+        .append('svg')
+        .attr('width', '100%')
+        .attr('height', '100%')
+        .attr('viewBox', `0 0 ${width} ${height}`);
 
-    const link = svg.append('g')
-      .attr('stroke', '#4f46e5')
-      .attr('stroke-opacity', 0.6)
-      .selectAll('line')
-      .data(links)
-      .join('line')
-      .attr('stroke-width', (d: any) => Math.sqrt(d.confidence || 0.5) * 2);
+      const nodes = data.nodes.map(d => Object.create(d));
+      const links = data.edges.map(d => Object.create(d));
 
-    const nodeGroup = svg.append('g')
-      .selectAll('g')
-      .data(nodes)
-      .join('g')
-      .call(drag(simulation) as any);
+      const simulation = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).id((d: any) => d.id).distance(120))
+        .force('charge', d3.forceManyBody().strength(-400))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collide', d3.forceCollide().radius(40));
 
-    nodeGroup.append('circle')
-      .attr('r', (d: any) => 12 + (d.importance * 10))
-      .attr('fill', '#4f46e5')
-      .attr('stroke', '#312e81')
-      .attr('stroke-width', 2);
+      const link = svg.append('g')
+        .attr('stroke', '#4f46e5')
+        .attr('stroke-opacity', 0.6)
+        .selectAll('line')
+        .data(links)
+        .join('line')
+        .attr('stroke-width', (d: any) => Math.sqrt(d.confidence || 0.5) * 2);
 
-    nodeGroup.append('text')
-      .text((d: any) => d.label)
-      .attr('x', 18)
-      .attr('y', 4)
-      .attr('fill', '#e4e4e7')
-      .attr('font-size', '11px')
-      .attr('font-weight', '600')
-      .style('pointer-events', 'none');
+      const nodeGroup = svg.append('g')
+        .selectAll('g')
+        .data(nodes)
+        .join('g')
+        .call(drag(simulation) as any);
 
-    simulation.on('tick', () => {
-      link
-        .attr('x1', (d: any) => d.source.x)
-        .attr('y1', (d: any) => d.source.y)
-        .attr('x2', (d: any) => d.target.x)
-        .attr('y2', (d: any) => d.target.y);
+      nodeGroup.append('circle')
+        .attr('r', (d: any) => 12 + (d.importance * 10))
+        .attr('fill', '#4f46e5')
+        .attr('stroke', '#312e81')
+        .attr('stroke-width', 2);
 
-      nodeGroup
-        .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
-    });
+      nodeGroup.append('text')
+        .text((d: any) => d.label)
+        .attr('x', 18)
+        .attr('y', 4)
+        .attr('fill', '#e4e4e7')
+        .attr('font-size', '11px')
+        .attr('font-weight', '600')
+        .style('pointer-events', 'none');
+
+      simulation.on('tick', () => {
+        link
+          .attr('x1', (d: any) => d.source.x)
+          .attr('y1', (d: any) => d.source.y)
+          .attr('x2', (d: any) => d.target.x)
+          .attr('y2', (d: any) => d.target.y);
+
+        nodeGroup
+          .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      });
+
+      return simulation;
+    }
 
     function drag(sim: any) {
       function dragstarted(event: any) {
@@ -87,9 +95,19 @@ export function KnowledgeGraphVisualizer({ data }: { data: { nodes: any[], edges
         .on('drag', dragged)
         .on('end', dragended);
     }
-    
+
+    let simulation = buildGraph();
+
+    // Handle window resize — rebuild graph with new dimensions
+    const resizeObserver = new ResizeObserver(() => {
+      if (simulation) simulation.stop();
+      simulation = buildGraph();
+    });
+    resizeObserver.observe(container);
+
     return () => {
-      simulation.stop();
+      if (simulation) simulation.stop();
+      resizeObserver.disconnect();
     };
   }, [data]);
 

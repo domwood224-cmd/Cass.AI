@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as d3 from 'd3';
 import { 
@@ -16,35 +16,70 @@ import {
   Cpu,
   ChevronRight,
   ChevronDown,
-  Info
+  Info,
+  Trash2,
+  Download,
+  Upload,
+  Key,
+  AlertCircle,
+  CheckCircle,
+  RefreshCw
 } from 'lucide-react';
 import { skillManager } from './lib/skill-tree';
 import { learningEngine } from './lib/learning-engine';
 import { cn } from './lib/utils';
 import { Skill, SkillCategory, LearningState, LearningType } from './types';
 import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer';
+import { chatWithCassidey, isGeminiConfigured, setGeminiApiKey, getStoredGeminiKey } from './lib/gemini';
+
+// Proper mapping from LearningType to SkillCategory for XP rewards
+const LEARNING_TYPE_TO_CATEGORY: Record<string, SkillCategory> = {
+  QUESTION_ANSWERING: SkillCategory.AI_LEARNING,
+  REASONING: SkillCategory.AI_LEARNING,
+  CREATIVITY: SkillCategory.COMMUNICATION,
+  EMPATHY: SkillCategory.COMMUNICATION,
+  GENERAL_CONVERSATION: SkillCategory.COMMUNICATION,
+  COMMAND_EXECUTION: SkillCategory.CODING,
+  MEMORY_MANAGEMENT: SkillCategory.SYSTEM,
+  GREETING: SkillCategory.COMMUNICATION,
+};
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'setup'>('chat');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>(() => {
-    const saved = localStorage.getItem('cassidey_messages');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('cassidey_messages');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
   const [inputValue, setInputValue] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('cassidey_messages', JSON.stringify(messages));
-  }, [messages]);
   const [isTyping, setIsTyping] = useState(false);
+  const [useGemini, setUseGemini] = useState(() => isGeminiConfigured());
   const [stats, setStats] = useState<LearningState>(learningEngine.getStats());
   const [skills, setSkills] = useState<Skill[]>(skillManager.getAllSkills());
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Setup tab state
+  const [apiKeyInput, setApiKeyInput] = useState(() => getStoredGeminiKey() || '');
+  const [apiSaved, setApiSaved] = useState(false);
+  const [showApiSaved, setShowApiSaved] = useState(false);
+
+  // Persist messages safely
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    try {
+      localStorage.setItem('cassidey_messages', JSON.stringify(messages));
+    } catch (e) {
+      console.error("Failed to save messages:", e);
+    }
   }, [messages]);
 
-  const handleSend = async () => {
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isTyping]);
+
+  const handleSend = useCallback(async () => {
     if (!inputValue.trim()) return;
 
     const userMsg = inputValue;
@@ -52,18 +87,34 @@ export default function App() {
     setInputValue('');
     setIsTyping(true);
 
-    // Give a slight delay to simulate internal processing wait 
-    await new Promise(r => setTimeout(r, 600));
+    let aiResponse: string;
+    try {
+      if (useGemini && isGeminiConfigured()) {
+        // Use Gemini API with conversation context
+        const context = messages.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+        aiResponse = await chatWithCassidey(userMsg, context);
+      } else {
+        // Give a slight delay to simulate processing
+        await new Promise(r => setTimeout(r, 600));
+        aiResponse = learningEngine.generateResponse(userMsg);
+      }
+    } catch {
+      aiResponse = learningEngine.generateResponse(userMsg);
+    }
 
-    // Local AI Logic
-    const aiResponse = learningEngine.generateResponse(userMsg);
-    
-    // Learning Engine Step
+    // Learning Engine Step (always runs locally for skill progression)
     const { type, improvement } = await learningEngine.processInteraction(userMsg, aiResponse);
     
-    // Reward Skills based on interaction type
-    const relevantSkills = skills.filter(s => s.category.toString().includes(type.split('_')[0]) || Math.random() > 0.8);
-    relevantSkills.forEach(s => skillManager.addXp(s.id, Math.floor(improvement * 500)));
+    // Reward Skills based on interaction type with proper mapping
+    const targetCategory = LEARNING_TYPE_TO_CATEGORY[type] || SkillCategory.COMMUNICATION;
+    const relevantSkills = skills.filter(s => s.category === targetCategory);
+    if (relevantSkills.length === 0) {
+      // Fallback: reward a random skill
+      const fallback = skills[Math.floor(Math.random() * skills.length)];
+      skillManager.addXp(fallback.id, Math.floor(improvement * 500));
+    } else {
+      relevantSkills.forEach(s => skillManager.addXp(s.id, Math.floor(improvement * 500)));
+    }
     
     skillManager.saveLocalProgress();
     learningEngine.saveLocalProgress();
@@ -72,7 +123,46 @@ export default function App() {
     setStats(learningEngine.getStats());
     setSkills(skillManager.getAllSkills());
     setIsTyping(false);
-  };
+  }, [inputValue, messages, skills, useGemini]);
+
+  const handleClearChat = useCallback(() => {
+    setMessages([]);
+    localStorage.removeItem('cassidey_messages');
+  }, []);
+
+  const handleExportData = useCallback(() => {
+    const data = {
+      messages: messages,
+      skillProgress: skillManager.exportProgress(),
+      learningState: stats,
+      exportedAt: new Date().toISOString(),
+      version: '2.0.4'
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cassidey-backup-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [messages, stats]);
+
+  const handleSaveApiKey = useCallback(() => {
+    setGeminiApiKey(apiKeyInput);
+    setUseGemini(!!apiKeyInput.trim());
+    setApiSaved(true);
+    setShowApiSaved(true);
+    setTimeout(() => setShowApiSaved(false), 2000);
+  }, [apiKeyInput]);
+
+  const handleResetAll = useCallback(() => {
+    learningEngine.reset();
+    skillManager.reset();
+    setStats(learningEngine.getStats());
+    setSkills(skillManager.getAllSkills());
+    setMessages([]);
+    localStorage.removeItem('cassidey_messages');
+  }, []);
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 overflow-hidden font-sans">
@@ -114,6 +204,12 @@ export default function App() {
                       <div className="space-y-2">
                         <h2 className="text-3xl font-bold text-white tracking-tight">Cassidey Node</h2>
                         <p className="text-zinc-500 text-sm max-w-[280px] mx-auto leading-relaxed">Local intelligence active. Every conversation trains my neural weights.</p>
+                        {useGemini && isGeminiConfigured() && (
+                          <p className="text-indigo-400 text-xs flex items-center justify-center gap-1.5">
+                            <Sparkles className="w-3 h-3" />
+                            Gemini-powered mode enabled
+                          </p>
+                        )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-sm mt-4">
                         <SuggestionCard text="What are your current skills?" onClick={() => setInputValue("What are your current skills?")} />
@@ -163,11 +259,11 @@ export default function App() {
                         placeholder="Speak to Cassidey..."
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                       />
                       <button 
                         onClick={handleSend}
-                        disabled={!inputValue.trim()}
+                        disabled={!inputValue.trim() || isTyping}
                         className="p-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(79,70,229,0.3)] active:scale-90"
                       >
                         <ChevronRight className="w-5 h-5" />
@@ -208,7 +304,7 @@ export default function App() {
                         <div className="space-y-3">
                           {skills.filter(s => s.category === category).map(skill => (
                             <SkillCard 
-                              key={skill.id} 
+                              key={skill.id}
                               skill={skill} 
                               progress={skillManager.getXpProgress(skill)}
                             />
@@ -274,13 +370,7 @@ export default function App() {
                           Knowledge Graph Topology
                         </h3>
                         <button
-                          onClick={() => {
-                            learningEngine.reset();
-                            skillManager.reset();
-                            setStats(learningEngine.getStats());
-                            setSkills(skillManager.getAllSkills());
-                            setMessages([]);
-                          }}
+                          onClick={handleResetAll}
                           className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 border border-red-500/20 transition-all active:scale-95 flex items-center gap-2"
                         >
                           <Zap className="w-3.5 h-3.5" />
@@ -288,6 +378,172 @@ export default function App() {
                         </button>
                       </div>
                       <KnowledgeGraphVisualizer data={learningEngine.getGraphData()} />
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'setup' && (
+              <motion.div 
+                key="setup"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="p-4 md:p-8"
+              >
+                <div className="max-w-2xl mx-auto space-y-6">
+                  <header>
+                    <h2 className="text-2xl font-bold text-white tracking-tight">Setup & Configuration</h2>
+                    <p className="text-zinc-500 text-xs mt-1">Manage your Cassidey instance settings and data.</p>
+                  </header>
+
+                  {/* Gemini API Key */}
+                  <div className="glass-panel rounded-[2rem] p-6 border-zinc-800/50 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-indigo-900/20 text-indigo-400">
+                        <Key className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">Gemini API Key</h3>
+                        <p className="text-[11px] text-zinc-500">Enable cloud-powered AI responses alongside local learning.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-indigo-500 transition-colors"
+                        placeholder="Enter your Gemini API key..."
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                      />
+                      <button
+                        onClick={handleSaveApiKey}
+                        className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-all active:scale-95"
+                      >
+                        Save
+                      </button>
+                    </div>
+
+                    <AnimatePresence>
+                      {showApiSaved && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="flex items-center gap-2 text-xs"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400">API key saved successfully</span>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {isGeminiConfigured() ? (
+                      <div className="flex items-center gap-3 pt-2">
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={useGemini}
+                            onChange={(e) => setUseGemini(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-zinc-400 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white"></div>
+                        </label>
+                        <span className="text-xs text-zinc-400">Use Gemini for chat responses</span>
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
+                        <Info className="w-3.5 h-3.5 text-zinc-500 mt-0.5 shrink-0" />
+                        <p className="text-[11px] text-zinc-500 leading-relaxed">
+                          Get a free Gemini API key from{' '}
+                          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
+                            Google AI Studio
+                          </a>
+                          {' '}to enable cloud-powered responses. Without it, Cassidey uses her local learning engine.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Data Management */}
+                  <div className="glass-panel rounded-[2rem] p-6 border-zinc-800/50 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-emerald-900/20 text-emerald-400">
+                        <Settings className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">Data Management</h3>
+                        <p className="text-[11px] text-zinc-500">Export, clear, or reset your learning data.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        onClick={handleExportData}
+                        className="flex items-center gap-3 p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 transition-all active:scale-[0.98] text-left group"
+                      >
+                        <Download className="w-4 h-4 text-zinc-500 group-hover:text-indigo-400 transition-colors" />
+                        <div>
+                          <span className="text-sm font-medium text-zinc-300 block">Export Data</span>
+                          <span className="text-[10px] text-zinc-600">Download backup JSON</span>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={handleClearChat}
+                        className="flex items-center gap-3 p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-red-500/30 transition-all active:scale-[0.98] text-left group"
+                      >
+                        <Trash2 className="w-4 h-4 text-zinc-500 group-hover:text-red-400 transition-colors" />
+                        <div>
+                          <span className="text-sm font-medium text-zinc-300 block">Clear Chat</span>
+                          <span className="text-[10px] text-zinc-600">{messages.length} messages</span>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={handleResetAll}
+                        className="flex items-center gap-3 p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-red-500/30 transition-all active:scale-[0.98] text-left group"
+                      >
+                        <RefreshCw className="w-4 h-4 text-zinc-500 group-hover:text-red-400 transition-colors" />
+                        <div>
+                          <span className="text-sm font-medium text-zinc-300 block">Full Reset</span>
+                          <span className="text-[10px] text-zinc-600">Erase all progress</span>
+                        </div>
+                      </button>
+
+                      <div className="flex items-center gap-3 p-4 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                        <div className="text-center flex-1">
+                          <span className="text-[10px] text-zinc-600 block uppercase tracking-widest mb-1">Vocabulary</span>
+                          <span className="text-lg font-mono text-indigo-400">{stats.totalIterations}</span>
+                          <span className="text-[10px] text-zinc-600 ml-1">words learned</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* About */}
+                  <div className="glass-panel rounded-[2rem] p-6 border-zinc-800/50 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-zinc-900 text-zinc-400">
+                        <Cpu className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">About Cassidey</h3>
+                        <p className="text-[11px] text-zinc-500">Open-source offline AI assistant with self-learning capabilities.</p>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-zinc-600 space-y-1 pl-11">
+                      <p>Version 2.0.4 (patched)</p>
+                      <p>Built with React + Tailwind CSS + D3.js</p>
+                      <p>Learning engine runs 100% locally in your browser.</p>
+                      <p>Source:{' '}
+                        <a href="https://github.com/mrsaggynutz/https-github.com-mrsaggynutz-Cassidey" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
+                          GitHub
+                        </a>
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -319,8 +575,8 @@ export default function App() {
         />
         <TabButton 
           icon={<Settings className="w-5 h-5" />} 
-          active={false} 
-          onClick={() => {}}
+          active={activeTab === 'setup'} 
+          onClick={() => setActiveTab('setup')}
           label="Setup"
         />
       </nav>
@@ -366,7 +622,7 @@ function SuggestionCard({ text, onClick }: { text: string, onClick: () => void }
   );
 }
 
-const SkillCard: React.FC<{ skill: Skill, progress: number, key?: any }> = ({ skill, progress }) => {
+const SkillCard: React.FC<{ skill: Skill, progress: number }> = ({ skill, progress }) => {
   const isLocked = skill.level === 0;
 
   return (
@@ -423,7 +679,7 @@ const SkillCard: React.FC<{ skill: Skill, progress: number, key?: any }> = ({ sk
       </div>
     </div>
   );
-}
+};
 
 function SkillCategoryIcon({ category, className }: { category: SkillCategory, className?: string }) {
   switch (category) {

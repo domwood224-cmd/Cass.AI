@@ -7,6 +7,7 @@ export class AdvancedLearningEngine {
   private iterations = 0;
   private vocabulary: Map<string, WordData> = new Map();
   private conversationContext: string[] = [];
+  private recentImprovements: number[] = []; // Track recent improvements for dynamic learning rate
 
   constructor() {
     this.initializeMastery();
@@ -14,44 +15,52 @@ export class AdvancedLearningEngine {
   }
 
   public saveLocalProgress() {
-    const data = {
-      nodes: Array.from(this.nodes.entries()),
-      edges: this.edges,
-      conceptMastery: this.conceptMastery,
-      iterations: this.iterations,
-      vocabulary: Array.from(this.vocabulary.entries()),
-      conversationContext: this.conversationContext
-    };
-    localStorage.setItem('cassidey_learning_progress', JSON.stringify(data));
+    try {
+      const data = {
+        nodes: Array.from(this.nodes.entries()),
+        edges: this.edges,
+        conceptMastery: this.conceptMastery,
+        iterations: this.iterations,
+        vocabulary: Array.from(this.vocabulary.entries()),
+        conversationContext: this.conversationContext,
+        recentImprovements: this.recentImprovements
+      };
+      localStorage.setItem('cassidey_learning_progress', JSON.stringify(data));
+    } catch (e) {
+      console.error("Failed to save learning progress:", e);
+    }
   }
 
   public loadLocalProgress() {
-    const json = localStorage.getItem('cassidey_learning_progress');
-    if (json) {
-      try {
-        const data = JSON.parse(json);
-        if (data.nodes) this.nodes = new Map(data.nodes);
-        if (data.edges) this.edges = data.edges;
-        if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
-        if (data.iterations) this.iterations = data.iterations;
-        if (data.vocabulary) {
-          const vocabMap = new Map();
-          for (const [k, v] of data.vocabulary) {
-            if (typeof v === 'number') {
-              // Legacy migration
-              vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [], nuance: 0.5 });
-            } else {
-              if (v.nuance === undefined) v.nuance = 0.5; // fallback
-              if (v.coOccurrences === undefined) v.coOccurrences = {};
-              vocabMap.set(k, v);
-            }
+    try {
+      const json = localStorage.getItem('cassidey_learning_progress');
+      if (!json) return;
+
+      const data = JSON.parse(json);
+      if (data.nodes) this.nodes = new Map(data.nodes);
+      if (data.edges) this.edges = data.edges;
+      if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
+      if (data.iterations) this.iterations = data.iterations;
+      if (data.recentImprovements) this.recentImprovements = data.recentImprovements;
+
+      if (data.vocabulary) {
+        const vocabMap = new Map();
+        for (const [k, v] of data.vocabulary) {
+          if (typeof v === 'number') {
+            // Legacy migration
+            vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [], nuance: 0.5, coOccurrences: {} });
+          } else {
+            if (v.nuance === undefined) v.nuance = 0.5;
+            if (v.coOccurrences === undefined) v.coOccurrences = {};
+            vocabMap.set(k, v);
           }
-          this.vocabulary = vocabMap;
         }
-        if (data.conversationContext) this.conversationContext = data.conversationContext;
-      } catch (e) {
-        console.error("Failed to load learning progress", e);
+        this.vocabulary = vocabMap;
       }
+
+      if (data.conversationContext) this.conversationContext = data.conversationContext;
+    } catch (e) {
+      console.error("Failed to load learning progress:", e);
     }
   }
 
@@ -62,13 +71,20 @@ export class AdvancedLearningEngine {
     this.iterations = 0;
     this.vocabulary.clear();
     this.conversationContext = [];
+    this.recentImprovements = [];
     this.initializeMastery();
-    localStorage.removeItem('cassidey_learning_progress');
+    try {
+      localStorage.removeItem('cassidey_learning_progress');
+    } catch (e) {
+      console.error("Failed to clear learning progress:", e);
+    }
   }
 
   private initializeMastery() {
     Object.values(LearningType).forEach(type => {
-      this.conceptMastery[type] = 0;
+      if (!(type in this.conceptMastery)) {
+        this.conceptMastery[type] = 0;
+      }
     });
   }
 
@@ -183,19 +199,25 @@ export class AdvancedLearningEngine {
   }> {
     this.iterations++;
     const type = this.determineLearningType(input);
-    const improvement = Math.random() * 0.05; // Simulated improvement
     
+    // Dynamic improvement based on vocabulary richness and concept familiarity
+    const entities = this.extractEntities(input);
+    const knownEntities = entities.filter(e => this.nodes.has(e.toLowerCase()));
+    const noveltyFactor = entities.length > 0 ? 1 - (knownEntities.length / entities.length) : 0.5;
+    const improvement = (Math.random() * 0.03) + (noveltyFactor * 0.03); // 0–0.06 range
+    
+    // Track recent improvements for dynamic learning rate
+    this.recentImprovements.push(improvement);
+    if (this.recentImprovements.length > 20) this.recentImprovements.shift();
+
     // Update mastery
     this.conceptMastery[type] = Math.min(1, this.conceptMastery[type] + improvement);
-
-    // Extract "Knowledge" (Simplified)
-    const entities = this.extractEntities(input);
 
     // Track vocabulary and sentiment
     const words = input.toLowerCase().match(/\b\w+\b/g) || [];
     const uniqueWordsInContext = Array.from(new Set(words));
     const simulatedSentiment = this.analyzeSentiment(input);
-    const baseNuance = Math.min(1.0, (input.length / 100) + (uniqueWordsInContext.length / 20)); // basic complexity metric
+    const baseNuance = Math.min(1.0, (input.length / 100) + (uniqueWordsInContext.length / 20));
 
     uniqueWordsInContext.forEach(w => {
       let existing = this.vocabulary.get(w);
@@ -222,7 +244,7 @@ export class AdvancedLearningEngine {
         if (w !== otherWord) {
           existing!.coOccurrences[otherWord] = (existing!.coOccurrences[otherWord] || 0) + 1;
           
-          // Boost nuance if co-occuring with less frequent words (indicates richer vocabulary)
+          // Boost nuance if co-occurring with less frequent words (indicates richer vocabulary)
           const otherWordData = this.vocabulary.get(otherWord);
           if (otherWordData && otherWordData.frequency < 5) {
              nuanceBoost += 0.05;
@@ -347,10 +369,21 @@ export class AdvancedLearningEngine {
     const masteryValues = Object.values(this.conceptMastery);
     const avgMastery = masteryValues.reduce((a, b) => a + b, 0) / masteryValues.length;
     
+    // Dynamic learning rate based on recent improvement trend
+    let dynamicLearningRate = 0.001;
+    if (this.recentImprovements.length >= 3) {
+      const recentAvg = this.recentImprovements.slice(-5).reduce((a, b) => a + b, 0) / this.recentImprovements.slice(-5).length;
+      const olderAvg = this.recentImprovements.slice(0, -5).length > 0 
+        ? this.recentImprovements.slice(0, -5).reduce((a, b) => a + b, 0) / this.recentImprovements.slice(0, -5).length 
+        : recentAvg;
+      // Learning rate increases when recent improvements exceed older ones
+      dynamicLearningRate = Math.max(0.0001, Math.min(0.01, 0.001 + (recentAvg - olderAvg) * 0.5));
+    }
+    
     return {
       totalIterations: this.iterations,
       accuracy: 0.7 + (avgMastery * 0.25),
-      learningRate: 0.001,
+      learningRate: dynamicLearningRate,
       averageMastery: avgMastery,
       conceptMastery: this.conceptMastery,
       uptime: Date.now()
@@ -362,6 +395,11 @@ export class AdvancedLearningEngine {
       nodes: Array.from(this.nodes.values()),
       edges: this.edges
     };
+  }
+
+  /** Get vocabulary size for display */
+  public getVocabularySize(): number {
+    return this.vocabulary.size;
   }
 }
 
