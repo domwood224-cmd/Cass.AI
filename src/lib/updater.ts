@@ -49,7 +49,7 @@ export type UpdateStatus =
 
 // ─── Version Helpers ─────────────────────────────────────────────────────
 
-const GITHUB_REPO = 'mrsaggynutz/https-github.com-mrsaggynutz-Cassidey';
+const GITHUB_REPO = 'mrsaggynutz/Cassidey-App';
 const PACKAGE_VERSION = '2.0.4'; // Keep in sync with package.json
 
 function parseVersion(tag: string): string {
