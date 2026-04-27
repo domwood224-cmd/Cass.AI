@@ -192,7 +192,7 @@ export default function App() {
       setUpdateStatus('downloading');
       setDownloadProgress(0);
       setUpdateError('');
-      await downloadUpdate(updateInfo.downloadUrl, (pct) => setDownloadProgress(pct));
+      await downloadUpdate(updateInfo.downloadUrl, (pct) => setDownloadProgress(pct), updateInfo.assetId);
       setUpdateStatus('downloaded');
     } catch (err) {
       setUpdateError(err instanceof Error ? err.message : 'Download failed');
