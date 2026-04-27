@@ -7,7 +7,6 @@ export class AdvancedLearningEngine {
   private iterations = 0;
   private vocabulary: Map<string, WordData> = new Map();
   private conversationContext: string[] = [];
-  private recentImprovements: number[] = []; // Track recent improvements for dynamic learning rate
 
   constructor() {
     this.initializeMastery();
@@ -15,52 +14,44 @@ export class AdvancedLearningEngine {
   }
 
   public saveLocalProgress() {
-    try {
-      const data = {
-        nodes: Array.from(this.nodes.entries()),
-        edges: this.edges,
-        conceptMastery: this.conceptMastery,
-        iterations: this.iterations,
-        vocabulary: Array.from(this.vocabulary.entries()),
-        conversationContext: this.conversationContext,
-        recentImprovements: this.recentImprovements
-      };
-      localStorage.setItem('cassidey_learning_progress', JSON.stringify(data));
-    } catch (e) {
-      console.error("Failed to save learning progress:", e);
-    }
+    const data = {
+      nodes: Array.from(this.nodes.entries()),
+      edges: this.edges,
+      conceptMastery: this.conceptMastery,
+      iterations: this.iterations,
+      vocabulary: Array.from(this.vocabulary.entries()),
+      conversationContext: this.conversationContext
+    };
+    localStorage.setItem('cassidey_learning_progress', JSON.stringify(data));
   }
 
   public loadLocalProgress() {
-    try {
-      const json = localStorage.getItem('cassidey_learning_progress');
-      if (!json) return;
-
-      const data = JSON.parse(json);
-      if (data.nodes) this.nodes = new Map(data.nodes);
-      if (data.edges) this.edges = data.edges;
-      if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
-      if (data.iterations) this.iterations = data.iterations;
-      if (data.recentImprovements) this.recentImprovements = data.recentImprovements;
-
-      if (data.vocabulary) {
-        const vocabMap = new Map();
-        for (const [k, v] of data.vocabulary) {
-          if (typeof v === 'number') {
-            // Legacy migration
-            vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [], nuance: 0.5, coOccurrences: {} });
-          } else {
-            if (v.nuance === undefined) v.nuance = 0.5;
-            if (v.coOccurrences === undefined) v.coOccurrences = {};
-            vocabMap.set(k, v);
+    const json = localStorage.getItem('cassidey_learning_progress');
+    if (json) {
+      try {
+        const data = JSON.parse(json);
+        if (data.nodes) this.nodes = new Map(data.nodes);
+        if (data.edges) this.edges = data.edges;
+        if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
+        if (data.iterations) this.iterations = data.iterations;
+        if (data.vocabulary) {
+          const vocabMap = new Map();
+          for (const [k, v] of data.vocabulary) {
+            if (typeof v === 'number') {
+              // Legacy migration
+              vocabMap.set(k, { word: k, frequency: v, sentiment: 0, associatedConcepts: [], nuance: 0.5 });
+            } else {
+              if (v.nuance === undefined) v.nuance = 0.5; // fallback
+              if (v.coOccurrences === undefined) v.coOccurrences = {};
+              vocabMap.set(k, v);
+            }
           }
+          this.vocabulary = vocabMap;
         }
-        this.vocabulary = vocabMap;
+        if (data.conversationContext) this.conversationContext = data.conversationContext;
+      } catch (e) {
+        console.error("Failed to load learning progress", e);
       }
-
-      if (data.conversationContext) this.conversationContext = data.conversationContext;
-    } catch (e) {
-      console.error("Failed to load learning progress:", e);
     }
   }
 
@@ -71,20 +62,13 @@ export class AdvancedLearningEngine {
     this.iterations = 0;
     this.vocabulary.clear();
     this.conversationContext = [];
-    this.recentImprovements = [];
     this.initializeMastery();
-    try {
-      localStorage.removeItem('cassidey_learning_progress');
-    } catch (e) {
-      console.error("Failed to clear learning progress:", e);
-    }
+    localStorage.removeItem('cassidey_learning_progress');
   }
 
   private initializeMastery() {
     Object.values(LearningType).forEach(type => {
-      if (!(type in this.conceptMastery)) {
-        this.conceptMastery[type] = 0;
-      }
+      this.conceptMastery[type] = 0;
     });
   }
 
@@ -199,25 +183,19 @@ export class AdvancedLearningEngine {
   }> {
     this.iterations++;
     const type = this.determineLearningType(input);
+    const improvement = Math.random() * 0.05; // Simulated improvement
     
-    // Dynamic improvement based on vocabulary richness and concept familiarity
-    const entities = this.extractEntities(input);
-    const knownEntities = entities.filter(e => this.nodes.has(e.toLowerCase()));
-    const noveltyFactor = entities.length > 0 ? 1 - (knownEntities.length / entities.length) : 0.5;
-    const improvement = (Math.random() * 0.03) + (noveltyFactor * 0.03); // 0–0.06 range
-    
-    // Track recent improvements for dynamic learning rate
-    this.recentImprovements.push(improvement);
-    if (this.recentImprovements.length > 20) this.recentImprovements.shift();
-
     // Update mastery
     this.conceptMastery[type] = Math.min(1, this.conceptMastery[type] + improvement);
+
+    // Extract "Knowledge" (Simplified)
+    const entities = this.extractEntities(input);
 
     // Track vocabulary and sentiment
     const words = input.toLowerCase().match(/\b\w+\b/g) || [];
     const uniqueWordsInContext = Array.from(new Set(words));
     const simulatedSentiment = this.analyzeSentiment(input);
-    const baseNuance = Math.min(1.0, (input.length / 100) + (uniqueWordsInContext.length / 20));
+    const baseNuance = Math.min(1.0, (input.length / 100) + (uniqueWordsInContext.length / 20)); // basic complexity metric
 
     uniqueWordsInContext.forEach(w => {
       let existing = this.vocabulary.get(w);
@@ -244,7 +222,7 @@ export class AdvancedLearningEngine {
         if (w !== otherWord) {
           existing!.coOccurrences[otherWord] = (existing!.coOccurrences[otherWord] || 0) + 1;
           
-          // Boost nuance if co-occurring with less frequent words (indicates richer vocabulary)
+          // Boost nuance if co-occuring with less frequent words (indicates richer vocabulary)
           const otherWordData = this.vocabulary.get(otherWord);
           if (otherWordData && otherWordData.frequency < 5) {
              nuanceBoost += 0.05;
@@ -263,7 +241,8 @@ export class AdvancedLearningEngine {
     });
 
     // Update conversation context
-    if (input.toLowerCase().match(/\b(hello|hi|hey|greetings)\b/)) {
+    const lower = input.toLowerCase();
+    if (lower.match(/\b(hello|hi|hey|greetings)\b/)) {
       this.conversationContext.push('greeting');
     } else {
       this.conversationContext.push('general');
@@ -276,10 +255,20 @@ export class AdvancedLearningEngine {
     if (entities.length > 0) {
       this.addNode(entities[0], input);
       
+      // Try to determine relationship from text
+      let relationship = "associated_with";
+      if (lower.includes(" is a ")) relationship = "is_a";
+      else if (lower.includes(" like ") || lower.includes(" likes ")) relationship = "likes";
+      else if (lower.includes(" uses ") || lower.includes(" using ")) relationship = "uses";
+      else if (lower.includes(" needs ") || lower.includes(" depends ")) relationship = "depends_on";
+      else if (lower.includes(" has ") || lower.includes(" have ")) relationship = "has";
+      else if (lower.includes(" loves ")) relationship = "loves";
+      else if (lower.includes(" hates ")) relationship = "hates";
+
       // Create edges if multiple entities or link to previous
       for (let i = 1; i < entities.length; i++) {
         this.addNode(entities[i], input);
-        this.addEdge(entities[i - 1], entities[i], "associated_with");
+        this.addEdge(entities[i - 1], entities[i], relationship);
       }
     }
 
@@ -322,6 +311,23 @@ export class AdvancedLearningEngine {
     return Array.from(new Set(entities));
   }
 
+  private categorizeEntity(word: string): string {
+    const lower = word.toLowerCase();
+    
+    // Simple naive categorization for semantic coloring
+    if (['code', 'react', 'javascript', 'typescript', 'api', 'server', 'database', 'frontend', 'backend', 'web', 'app', 'software', 'hardware', 'computer', 'network', 'cloud', 'data', 'algorithm', 'function', 'system', 'node', 'graph'].includes(lower)) return 'technology';
+    if (['love', 'hate', 'happy', 'sad', 'angry', 'excited', 'bored', 'tired', 'feel', 'sorry', 'empathy', 'joy', 'fear', 'anger', 'disgust', 'surprise', 'trust', 'anticipation', 'good', 'bad'].includes(lower)) return 'emotion';
+    if (['time', 'today', 'tomorrow', 'yesterday', 'now', 'later', 'soon', 'future', 'past', 'present', 'morning', 'afternoon', 'evening', 'night', 'day', 'week', 'month', 'year'].includes(lower)) return 'time';
+    if (['home', 'work', 'school', 'city', 'country', 'world', 'earth', 'space', 'universe', 'place', 'location', 'here', 'there', 'where', 'inside', 'outside'].includes(lower)) return 'location';
+    if (['i', 'you', 'he', 'she', 'we', 'they', 'person', 'people', 'man', 'woman', 'child', 'adult', 'human', 'user', 'developer', 'engineer', 'designer', 'cassidey', 'name'].includes(lower)) return 'person';
+    
+    if (word.match(/^[A-Z]/)) return 'entity'; // Capitalized often names/entities
+    if (lower.endsWith('ing')) return 'action'; // Verb gerunds
+    if (lower.endsWith('ion') || lower.endsWith('ity') || lower.endsWith('ness') || lower.endsWith('ment')) return 'abstract';
+    
+    return 'concept'; // Default
+  }
+
   private addNode(label: string, content: string) {
     const id = label.toLowerCase();
     if (!this.nodes.has(id)) {
@@ -329,6 +335,7 @@ export class AdvancedLearningEngine {
         id,
         label,
         content,
+        category: this.categorizeEntity(label),
         created: Date.now(),
         lastAccessed: Date.now(),
         accessCount: 1,
@@ -369,21 +376,10 @@ export class AdvancedLearningEngine {
     const masteryValues = Object.values(this.conceptMastery);
     const avgMastery = masteryValues.reduce((a, b) => a + b, 0) / masteryValues.length;
     
-    // Dynamic learning rate based on recent improvement trend
-    let dynamicLearningRate = 0.001;
-    if (this.recentImprovements.length >= 3) {
-      const recentAvg = this.recentImprovements.slice(-5).reduce((a, b) => a + b, 0) / this.recentImprovements.slice(-5).length;
-      const olderAvg = this.recentImprovements.slice(0, -5).length > 0 
-        ? this.recentImprovements.slice(0, -5).reduce((a, b) => a + b, 0) / this.recentImprovements.slice(0, -5).length 
-        : recentAvg;
-      // Learning rate increases when recent improvements exceed older ones
-      dynamicLearningRate = Math.max(0.0001, Math.min(0.01, 0.001 + (recentAvg - olderAvg) * 0.5));
-    }
-    
     return {
       totalIterations: this.iterations,
       accuracy: 0.7 + (avgMastery * 0.25),
-      learningRate: dynamicLearningRate,
+      learningRate: 0.001,
       averageMastery: avgMastery,
       conceptMastery: this.conceptMastery,
       uptime: Date.now()
@@ -395,11 +391,6 @@ export class AdvancedLearningEngine {
       nodes: Array.from(this.nodes.values()),
       edges: this.edges
     };
-  }
-
-  /** Get vocabulary size for display */
-  public getVocabularySize(): number {
-    return this.vocabulary.size;
   }
 }
 

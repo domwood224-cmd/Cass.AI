@@ -55,6 +55,7 @@ export interface KnowledgeNode {
   accessCount: number;
   importance: number;
   content?: string;
+  category?: string;
 }
 
 export interface KnowledgeEdge {

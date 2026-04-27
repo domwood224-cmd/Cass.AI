@@ -1,4 +1,4 @@
-package org.cassidey.app;
+package com.getcapacitor.myapp;
 
 import static org.junit.Assert.*;
 
@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
-        assertEquals("org.cassidey.app", appContext.getPackageName());
+        assertEquals("com.getcapacitor.app", appContext.getPackageName());
     }
 }

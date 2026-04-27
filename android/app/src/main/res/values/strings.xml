@@ -1,7 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Cassidey</string>
-    <string name="title_activity_main">Cassidey</string>
+    <string name="app_name">cassidey</string>
+    <string name="title_activity_main">cassidey</string>
     <string name="package_name">org.cassidey.app</string>
     <string name="custom_url_scheme">org.cassidey.app</string>
 </resources>
