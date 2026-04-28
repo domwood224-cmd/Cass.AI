@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { skillManager } from './lib/skill-tree';
 import { learningEngine } from './lib/learning-engine';
+import { chatWithCassidey } from './lib/gemini';
 import { cn } from './lib/utils';
 import { Skill, SkillCategory, LearningState, LearningType } from './types';
 import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer';
@@ -54,13 +55,26 @@ export default function App() {
     setInputValue('');
     setIsTyping(true);
 
-    // Give a slight delay to simulate internal processing wait 
-    await new Promise(r => setTimeout(r, 600));
+    // Build conversation context from recent messages for Gemini
+    const recentContext = messages.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
 
-    // Local AI Logic
-    const aiResponse = learningEngine.generateResponse(userMsg);
-    
-    // Learning Engine Step
+    let aiResponse: string;
+
+    try {
+      // Try Gemini AI first (primary brain)
+      const geminiResponse = await chatWithCassidey(userMsg, recentContext);
+      if (geminiResponse) {
+        aiResponse = geminiResponse;
+      } else {
+        // Fallback to local learning engine
+        aiResponse = learningEngine.generateResponse(userMsg);
+      }
+    } catch {
+      // Gemini unavailable — local engine takes over
+      aiResponse = learningEngine.generateResponse(userMsg);
+    }
+
+    // Learning Engine Step (always runs to grow the knowledge graph)
     const { type, improvement } = await learningEngine.processInteraction(userMsg, aiResponse);
     
     // Reward Skills based on interaction type
@@ -399,7 +413,7 @@ export default function App() {
                       placeholder="Execute command protocol..."
                       value={inputValue}
                       onChange={(e) => setInputValue(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                     />
                   </div>
                   
