@@ -21,7 +21,10 @@ export enum SkillCategory {
   PDF_ANALYSIS = "PDF Analysis",
   YOUTUBE_LEARNING = "YouTube Learning",
   SYSTEM = "System",
-  COMMUNICATION = "Communication"
+  COMMUNICATION = "Communication",
+  CREATIVITY = "Creativity",
+  PHILOSOPHY = "Philosophy",
+  GAME_THEORY = "Game Theory"
 }
 
 export interface Skill {
@@ -82,4 +85,23 @@ export interface LearningState {
   averageMastery: number;
   conceptMastery: Record<string, number>;
   uptime: number;
+}
+
+// ─── AI Engine State (from the script) ───
+export interface AIEngineState {
+  currentLearningRate: number;
+  totalLearningIterations: number;
+  currentAccuracy: number;
+  averageMastery: number;
+  conceptMastery: Record<string, number>;
+  lastImprovement: number;
+  lastProcessingTime: number;
+  transferSuccessRate: number;
+  averageTransferBenefit: number;
+  knowledgeGraphNodes: number;
+  knowledgeGraphEdges: number;
+  activeLearningStrategy: string;
+  learningEfficiency: number;
+  transformerVocabSize: number;
+  attentionCacheSize: number;
 }
