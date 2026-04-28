@@ -108,7 +108,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div className="flex flex-col h-[100dvh] bg-[var(--color-system-bg)] overflow-hidden font-sans relative">
+    <div className="flex flex-col fixed inset-0 bg-[var(--color-system-bg)] overflow-hidden font-sans relative">
       <div className="nerve-line"></div>
       
       {/* Corner Micro-text Warnings - hidden on small screens */}
@@ -127,7 +127,7 @@ export default function App() {
       </div>
       
       {/* Compact Mobile Header */}
-      <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0 safe-area-top">
+      <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0 pt-[env(safe-area-inset-top,0px)]">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10">
             <Cpu className="text-emerald-200/80 w-3.5 h-3.5" />
@@ -447,7 +447,7 @@ export default function App() {
       </main>
 
       {/* Compact Bottom Tab Bar - mobile optimized */}
-      <nav className="h-14 glass-nav flex items-center justify-around px-1 z-40 shrink-0 safe-area-bottom backdrop-blur-2xl">
+      <nav className="h-14 glass-nav flex items-center justify-around px-1 z-40 shrink-0 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)]">
         <TabButton 
           icon={<MessageSquare className="w-[18px] h-[18px]" />} 
           active={activeTab === 'chat'} 
