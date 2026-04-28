@@ -97,6 +97,36 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-8);
 }
 
+// ── Attention Modes ──
+export enum AttentionMode {
+  HYBRID = 'HYBRID',
+  SELF_ATTENTION = 'SELF_ATTENTION',
+  CROSS_ATTENTION = 'CROSS_ATTENTION',
+  MULTI_HEAD = 'MULTI_HEAD',
+  LINEAR = 'LINEAR',
+  FLASH = 'FLASH',
+}
+
+export interface TransformerConfig {
+  attentionMode: AttentionMode;
+  numHeads: number;
+  numLayers: number;
+  modelDimension: number;
+  ffDimension: number;
+  dropoutRate: number;
+  temperature: number;
+}
+
+export const DEFAULT_TRANSFORMER_CONFIG: TransformerConfig = {
+  attentionMode: AttentionMode.HYBRID,
+  numHeads: 8,
+  numLayers: 4,
+  modelDimension: 256,
+  ffDimension: 512,
+  dropoutRate: 0.1,
+  temperature: 1.0,
+};
+
 export class TransformerAttention {
   private queryWeights: number[][];
   private keyWeights: number[][];
@@ -109,13 +139,31 @@ export class TransformerAttention {
   private attentionCache: Map<string, number[]>;
   private vocabSize = 0;
 
-  constructor() {
-    this.queryWeights = initializeRandomMatrix(MODEL_DIMENSION, MODEL_DIMENSION);
-    this.keyWeights = initializeRandomMatrix(MODEL_DIMENSION, MODEL_DIMENSION);
-    this.valueWeights = initializeRandomMatrix(MODEL_DIMENSION, MODEL_DIMENSION);
-    this.outputProjection = initializeRandomMatrix(MODEL_DIMENSION, MODEL_DIMENSION);
-    this.ffLayer1Weights = initializeRandomMatrix(FEED_FORWARD_DIMENSION, MODEL_DIMENSION);
-    this.ffLayer2Weights = initializeRandomMatrix(MODEL_DIMENSION, FEED_FORWARD_DIMENSION);
+  // Configurable settings
+  private attentionMode: AttentionMode = AttentionMode.HYBRID;
+  private numHeads: number = 8;
+  private numLayers: number = 4;
+  private modelDimension: number = MODEL_DIMENSION;
+  private ffDimension: number = FEED_FORWARD_DIMENSION;
+  private dropoutRate: number = 0.1;
+  private temperature: number = 1.0;
+
+  constructor(config?: Partial<TransformerConfig>) {
+    if (config) {
+      if (config.attentionMode) this.attentionMode = config.attentionMode;
+      if (config.numHeads) this.numHeads = config.numHeads;
+      if (config.numLayers) this.numLayers = config.numLayers;
+      if (config.modelDimension) this.modelDimension = config.modelDimension;
+      if (config.ffDimension) this.ffDimension = config.ffDimension;
+      if (config.dropoutRate !== undefined) this.dropoutRate = config.dropoutRate;
+      if (config.temperature !== undefined) this.temperature = config.temperature;
+    }
+    this.queryWeights = initializeRandomMatrix(this.modelDimension, this.modelDimension);
+    this.keyWeights = initializeRandomMatrix(this.modelDimension, this.modelDimension);
+    this.valueWeights = initializeRandomMatrix(this.modelDimension, this.modelDimension);
+    this.outputProjection = initializeRandomMatrix(this.modelDimension, this.modelDimension);
+    this.ffLayer1Weights = initializeRandomMatrix(this.ffDimension, this.modelDimension);
+    this.ffLayer2Weights = initializeRandomMatrix(this.modelDimension, this.ffDimension);
     this.positionalEncoding = this.initPositionalEncodings();
     this.tokenEmbeddings = new Map();
     this.attentionCache = new Map();
@@ -193,51 +241,51 @@ export class TransformerAttention {
   // ── Public API ──
 
   extractFeatures(text: string): number[] {
-    const cacheKey = text.substring(0, 200);
+    const cacheKey = `${this.attentionMode}:${text.substring(0, 200)}`;
     if (this.attentionCache.has(cacheKey)) {
       return [...this.attentionCache.get(cacheKey)!];
     }
 
     const tokens = this.tokenize(text);
     const seqLen = Math.min(tokens.length, MAX_SEQUENCE_LENGTH);
+    const dim = this.modelDimension;
     const tokenMatrix: number[][] = [];
 
     for (let i = 0; i < seqLen; i++) {
       const emb = this.getTokenEmbedding(tokens[i]);
-      for (let j = 0; j < MODEL_DIMENSION; j++) {
+      for (let j = 0; j < dim; j++) {
         emb[j] += this.positionalEncoding[i]?.[j] ?? 0;
       }
       tokenMatrix.push(emb);
     }
 
-    // Apply transformer layers
     let output = tokenMatrix.map(row => [...row]);
-    for (let layer = 0; layer < NUM_LAYERS; layer++) {
-      // Simplified multi-head attention (use matrix multiply approximation)
-      const attnOut = matrixMultiply(output, this.queryWeights);
-      // Residual + norm
-      for (let i = 0; i < output.length; i++) {
-        for (let j = 0; j < MODEL_DIMENSION; j++) {
-          output[i][j] = output[i][j] + (attnOut[i]?.[j] ?? 0);
-        }
-        layerNorm(output[i]);
-      }
-      // Feed-forward
+    for (let layer = 0; layer < this.numLayers; layer++) {
+      output = this.applyAttentionLayer(output, layer);
+      // Feed-forward with residual + norm
       for (let i = 0; i < output.length; i++) {
         const hidden = matrixVectorMultiply(this.ffLayer1Weights, output[i]);
         reluActivation(hidden);
         const ffOut = matrixVectorMultiply(this.ffLayer2Weights, hidden);
-        for (let j = 0; j < MODEL_DIMENSION; j++) {
+        for (let j = 0; j < dim; j++) {
           output[i][j] = output[i][j] + (ffOut[j] ?? 0);
         }
         layerNorm(output[i]);
       }
     }
 
+    // Apply temperature scaling
+    if (this.temperature !== 1.0) {
+      for (let i = 0; i < output.length; i++) {
+        for (let j = 0; j < dim; j++) {
+          output[i][j] /= this.temperature;
+        }
+      }
+    }
+
     const pooled = this.meanPooling(output);
     normalize(pooled);
 
-    // Cache management
     if (this.attentionCache.size > 1000) {
       const firstKey = this.attentionCache.keys().next().value;
       this.attentionCache.delete(firstKey);
@@ -245,6 +293,96 @@ export class TransformerAttention {
     this.attentionCache.set(cacheKey, [...pooled]);
 
     return pooled;
+  }
+
+  private applyAttentionLayer(output: number[][], layer: number): number[][] {
+    const dim = this.modelDimension;
+    switch (this.attentionMode) {
+      case AttentionMode.SELF_ATTENTION:
+        return this.selfAttention(output);
+      case AttentionMode.CROSS_ATTENTION:
+        // Cross: shift input by 1 to simulate encoder-decoder cross attention
+        if (output.length > 1) {
+          const shifted = output.slice(1).concat([output[0]]);
+          return this.crossAttention(output, shifted);
+        }
+        return this.selfAttention(output);
+      case AttentionMode.MULTI_HEAD:
+        return this.multiHeadAttention(output, this.numHeads);
+      case AttentionMode.LINEAR:
+        return this.linearAttention(output);
+      case AttentionMode.FLASH:
+        // Flash: optimized single-pass (same as multi-head but without chunking)
+        return this.multiHeadAttention(output, this.numHeads);
+      case AttentionMode.HYBRID:
+      default:
+        // Hybrid: alternate self and multi-head per layer
+        if (layer % 2 === 0) return this.selfAttention(output);
+        return this.multiHeadAttention(output, this.numHeads);
+    }
+  }
+
+  private selfAttention(output: number[][]): number[][] {
+    const attnOut = matrixMultiply(output, this.queryWeights);
+    for (let i = 0; i < output.length; i++) {
+      for (let j = 0; j < this.modelDimension; j++) {
+        output[i][j] = output[i][j] + (attnOut[i]?.[j] ?? 0);
+      }
+      layerNorm(output[i]);
+    }
+    return output;
+  }
+
+  private crossAttention(query: number[][], context: number[][]): number[][] {
+    const qProj = matrixMultiply(query, this.queryWeights);
+    const kProj = matrixMultiply(context, this.keyWeights);
+    const vProj = matrixMultiply(context, this.valueWeights);
+    for (let i = 0; i < query.length; i++) {
+      for (let j = 0; j < this.modelDimension; j++) {
+        query[i][j] = query[i][j] + (qProj[i]?.[j] ?? 0) + ((kProj[i]?.[j] ?? 0) + (vProj[i]?.[j] ?? 0)) * 0.5;
+      }
+      layerNorm(query[i]);
+    }
+    return query;
+  }
+
+  private multiHeadAttention(output: number[][], heads: number): number[][] {
+    const headDim = Math.floor(this.modelDimension / heads);
+    const result = output.map(row => [...row]);
+    for (let h = 0; h < heads; h++) {
+      const offset = h * headDim;
+      for (let i = 0; i < output.length; i++) {
+        const attnSlice = matrixVectorMultiply(this.queryWeights, output[i]);
+        for (let j = 0; j < headDim; j++) {
+          result[i][offset + j] += (attnSlice[offset + j] ?? 0) * (1.0 / heads);
+        }
+      }
+    }
+    for (let i = 0; i < result.length; i++) {
+      for (let j = 0; j < this.modelDimension; j++) {
+        result[i][j] = result[i][j] + output[i][j]; // residual
+      }
+      layerNorm(result[i]);
+    }
+    return result;
+  }
+
+  private linearAttention(output: number[][]): number[][] {
+    // Linear attention: O(n) instead of O(n^2) — feature-level instead of token-level
+    const summed = new Array(this.modelDimension).fill(0);
+    for (const token of output) {
+      for (let j = 0; j < this.modelDimension; j++) {
+        summed[j] += token[j];
+      }
+    }
+    const scale = 1.0 / Math.max(1, output.length);
+    for (let i = 0; i < output.length; i++) {
+      for (let j = 0; j < this.modelDimension; j++) {
+        output[i][j] = output[i][j] + summed[j] * scale * 0.5;
+      }
+      layerNorm(output[i]);
+    }
+    return output;
   }
 
   calculateSimilarity(text1: string, text2: string): number {
@@ -299,4 +437,48 @@ export class TransformerAttention {
   getVocabSize(): number { return this.vocabSize; }
   getCacheSize(): number { return this.attentionCache.size; }
   clearCache(): void { this.attentionCache.clear(); }
+
+  // ── Config API ──
+  getAttentionMode(): AttentionMode { return this.attentionMode; }
+  setAttentionMode(mode: AttentionMode): void {
+    this.attentionMode = mode;
+    this.attentionCache.clear(); // Clear cache since results differ by mode
+  }
+  getNumHeads(): number { return this.numHeads; }
+  setNumHeads(h: number): void {
+    this.numHeads = Math.max(1, Math.min(32, h));
+    this.attentionCache.clear();
+  }
+  getNumLayers(): number { return this.numLayers; }
+  setNumLayers(n: number): void {
+    this.numLayers = Math.max(1, Math.min(16, n));
+    this.attentionCache.clear();
+  }
+  getTemperature(): number { return this.temperature; }
+  setTemperature(t: number): void {
+    this.temperature = Math.max(0.1, Math.min(5.0, t));
+    this.attentionCache.clear();
+  }
+  getDropoutRate(): number { return this.dropoutRate; }
+  setDropoutRate(r: number): void {
+    this.dropoutRate = Math.max(0, Math.min(0.8, r));
+  }
+  getConfig(): TransformerConfig {
+    return {
+      attentionMode: this.attentionMode,
+      numHeads: this.numHeads,
+      numLayers: this.numLayers,
+      modelDimension: this.modelDimension,
+      ffDimension: this.ffDimension,
+      dropoutRate: this.dropoutRate,
+      temperature: this.temperature,
+    };
+  }
+  setConfig(config: Partial<TransformerConfig>): void {
+    if (config.attentionMode) this.setAttentionMode(config.attentionMode);
+    if (config.numHeads) this.setNumHeads(config.numHeads);
+    if (config.numLayers) this.setNumLayers(config.numLayers);
+    if (config.temperature !== undefined) this.setTemperature(config.temperature);
+    if (config.dropoutRate !== undefined) this.setDropoutRate(config.dropoutRate);
+  }
 }

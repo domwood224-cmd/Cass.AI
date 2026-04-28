@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
 import { aiEngine } from './lib/ai';
+import { AttentionMode } from './lib/ai';
 import { WebLearner } from './lib/ai/web-learner';
 import { Globe, Search } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -147,6 +148,12 @@ export default function App() {
   const [lastNeuralPath, setLastNeuralPath] = useState<string[]>([]);
   const [deepPattern, setDeepPattern] = useState('');
 
+  // Transformer config states
+  const [attnMode, setAttnMode] = useState<AttentionMode>(AttentionMode.HYBRID);
+  const [attnHeads, setAttnHeads] = useState(8);
+  const [attnLayers, setAttnLayers] = useState(4);
+  const [attnTemperature, setAttnTemperature] = useState(1.0);
+
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
       const n = (window as any).__CASSIDEY_NATIVE__;
@@ -175,6 +182,11 @@ export default function App() {
       await aiEngine.loadLocalProgress();
       setSkills(skillManager.getAllSkills());
       setAiStats(aiEngine.getStats());
+      const tConfig = aiEngine.getTransformer().getConfig();
+      setAttnMode(tConfig.attentionMode);
+      setAttnHeads(tConfig.numHeads);
+      setAttnLayers(tConfig.numLayers);
+      setAttnTemperature(tConfig.temperature);
       setReady(true);
     })();
   }, []);
@@ -238,6 +250,15 @@ export default function App() {
 
   const updateSetting = useCallback(<K extends keyof AdvancedSettings>(key: K, value: AdvancedSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const updateTransformerConfig = useCallback((key: string, value: any) => {
+    const t = aiEngine.getTransformer();
+    if (key === 'attentionMode') { t.setAttentionMode(value); setAttnMode(value); }
+    else if (key === 'numHeads') { t.setNumHeads(value); setAttnHeads(value); }
+    else if (key === 'numLayers') { t.setNumLayers(value); setAttnLayers(value); }
+    else if (key === 'temperature') { t.setTemperature(value); setAttnTemperature(value); }
+    setAiStats(aiEngine.getStats());
   }, []);
 
   const handleCopy = useCallback((text: string, idx: number) => {
@@ -698,15 +719,70 @@ export default function App() {
 
                     <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[2.5rem] p-6 border border-white/20 shadow-2xl relative overflow-hidden">
                       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
-                      <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-6 flex items-center gap-3">
-                        <Layers className="w-4 h-4 text-cyan-300/60" />
-                        Transformer Attention Module
-                      </h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 flex items-center gap-3">
+                          <Layers className="w-4 h-4 text-cyan-300/60" />
+                          Transformer Attention Module
+                        </h3>
+                        <span className="text-[7px] font-mono text-cyan-400/60 uppercase tracking-widest">{attnMode.replace('_', ' ')}</span>
+                      </div>
+
+                      {/* Stats Row */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                         <MiniStat label="Vocabulary" value={aiStats.transformerVocabSize} icon={<Terminal className="w-3 h-3" />} />
                         <MiniStat label="Cache Size" value={aiStats.attentionCacheSize} icon={<Database className="w-3 h-3" />} />
                         <MiniStat label="Strategy" value={aiStats.activeLearningStrategy.replace('_', ' ')} icon={<Shield className="w-3 h-3" />} />
                         <MiniStat label="Efficiency" value={aiStats.learningEfficiency.toFixed(6)} icon={<Activity className="w-3 h-3" />} />
+                      </div>
+
+                      {/* ── Attention Mode Selector ── */}
+                      <div className="space-y-4 pt-4 border-t border-white/[0.06]">
+                        <div className="flex items-center gap-2 px-1">
+                          <Cpu className="w-3.5 h-3.5 text-cyan-400/50" />
+                          <span className="text-[9px] font-medium uppercase tracking-[0.15em] text-zinc-400">Attention Configuration</span>
+                        </div>
+
+                        {/* Mode Selector */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.values(AttentionMode).map(mode => (
+                            <button key={mode} onClick={() => updateTransformerConfig('attentionMode', mode)}
+                              className={cn(
+                                "px-3 py-1.5 rounded-full text-[8px] font-mono uppercase tracking-widest transition-all border",
+                                attnMode === mode
+                                  ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300 shadow-[0_0_12px_rgba(0,243,255,0.15)]"
+                                  : "bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10 hover:text-zinc-300"
+                              )}>
+                              {mode.replace('_', ' ')}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Heads Slider */}
+                        <div className="flex items-center gap-3 px-1">
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest w-10">Heads</span>
+                          <input type="range" min="1" max="16" step="1" value={attnHeads}
+                            onChange={e => updateTransformerConfig('numHeads', parseInt(e.target.value))}
+                            className="flex-1 accent-cyan-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400 [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(0,243,255,0.4)]" />
+                          <span className="text-[9px] font-mono text-cyan-300 w-6 text-right">{attnHeads}</span>
+                        </div>
+
+                        {/* Layers Slider */}
+                        <div className="flex items-center gap-3 px-1">
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest w-10">Layers</span>
+                          <input type="range" min="1" max="12" step="1" value={attnLayers}
+                            onChange={e => updateTransformerConfig('numLayers', parseInt(e.target.value))}
+                            className="flex-1 accent-purple-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(168,85,247,0.4)]" />
+                          <span className="text-[9px] font-mono text-purple-300 w-6 text-right">{attnLayers}</span>
+                        </div>
+
+                        {/* Temperature Slider */}
+                        <div className="flex items-center gap-3 px-1">
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest w-10">Temp</span>
+                          <input type="range" min="0.1" max="3.0" step="0.1" value={attnTemperature}
+                            onChange={e => updateTransformerConfig('temperature', parseFloat(e.target.value))}
+                            className="flex-1 accent-amber-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400 [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(245,158,11,0.4)]" />
+                          <span className="text-[9px] font-mono text-amber-300 w-8 text-right">{attnTemperature.toFixed(1)}</span>
+                        </div>
                       </div>
                     </div>
 

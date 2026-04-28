@@ -1,5 +1,6 @@
 export { AdvancedLearningEngine, aiEngine } from './advanced-learning-engine';
-export { TransformerAttention } from './transformer-attention';
+export { TransformerAttention, AttentionMode, DEFAULT_TRANSFORMER_CONFIG } from './transformer-attention';
+export type { TransformerConfig } from './transformer-attention';
 export { ActiveLearningSystem, SamplingStrategy } from './active-learning-system';
 export { NeuralKnowledgeGraph } from './neural-knowledge-graph';
 export { TransferLearningManager } from './transfer-learning-manager';
