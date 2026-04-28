@@ -248,7 +248,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: '56px' }}>
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col">
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
             {activeTab === 'chat' && (
@@ -554,12 +554,12 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="absolute bottom-0 left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl">
-        <TabButton icon={<MessageSquare className="w-[18px] h-[18px]" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
-        <TabButton icon={<GitBranch className="w-[18px] h-[18px]" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
-        <TabButton icon={<Brain className="w-[18px] h-[18px]" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
-        <TabButton icon={<Orbit className="w-[18px] h-[18px]" />} active={activeTab === 'graph'} onClick={() => setActiveTab('graph')} label="Graph" />
-        <TabButton icon={<Settings className="w-[18px] h-[18px]" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
+      <nav className="h-16 glass-nav flex items-center justify-around px-2 z-40 shrink-0 backdrop-blur-2xl safe-area-bottom pb-2">
+        <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
+        <TabButton icon={<GitBranch className="w-5 h-5" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
+        <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
+        <TabButton icon={<Orbit className="w-5 h-5" />} active={activeTab === 'graph'} onClick={() => setActiveTab('graph')} label="Graph" />
+        <TabButton icon={<Settings className="w-5 h-5" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Interface" />
       </nav>
     </div>
     </ErrorBoundary>
@@ -570,12 +570,12 @@ export default function App() {
 
 function TabButton({ icon, active, onClick, label }: { icon: React.ReactNode, active: boolean, onClick: () => void, label: string }) {
   return (
-    <button onClick={onClick} className={cn("flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all duration-300 relative min-w-[56px]",
-      active ? "bg-white/10 shadow-[0_2px_10px_rgba(0,243,255,0.1),_inset_0_1px_rgba(255,255,255,0.2)] border border-white/15" : "text-zinc-400 active:text-zinc-200"
+    <button onClick={onClick} className={cn("flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-300 relative min-w-[70px]",
+      active ? "bg-white/10 shadow-[0_4px_15px_rgba(255,191,0,0.1),_inset_0_1px_rgba(255,255,255,0.2)] border border-white/20 tab-active" : "glass-button text-zinc-300 hover:text-zinc-300"
     )}>
-      <div className={cn("transition-transform duration-300", active ? "scale-110 drop-shadow-[0_0_6px_var(--color-electric-cyan)] text-[var(--color-electric-cyan)]" : "scale-100")}>{icon}</div>
-      <span className="text-[7px] font-mono font-bold uppercase tracking-[0.08em] text-center max-w-[56px] leading-tight mt-0.5">{label}</span>
-      {active && <motion.div layoutId="activeIndicator" className="absolute -bottom-0.5 w-[40%] h-[2px] bg-[var(--color-electric-cyan)] shadow-[0_0_6px_var(--color-electric-cyan)] rounded-full" />}
+      <div className={cn("transition-transform duration-300", active ? "scale-110 drop-shadow-[0_0_8px_var(--color-amber)]" : "scale-100")}>{icon}</div>
+      <span className="text-[7.5px] font-mono font-bold uppercase tracking-[0.1em] text-center max-w-[65px] leading-tight">{label}</span>
+      {active && <motion.div layoutId="activeIndicator" className="absolute -bottom-[6px] w-[50%] h-[2px] bg-[var(--color-amber)] shadow-[0_0_8px_var(--color-amber)] rounded-full" />}
     </button>
   );
 }
