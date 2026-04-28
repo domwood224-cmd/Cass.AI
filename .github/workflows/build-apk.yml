@@ -87,6 +87,9 @@ jobs:
           path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
 
+      - name: List APK output
+        run: ls -la android/app/build/outputs/apk/release/
+
       - name: Create GitHub Release
         if: >-
           (startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push') ||
@@ -94,14 +97,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK_PATH=$(find android/app/build/outputs/apk/release/ -name '*.apk' | head -n1)
-          APK_NAME="Cassidey-${{ steps.version.outputs.version }}.apk"
+          shopt -s nullglob
+          files=(android/app/build/outputs/apk/release/*.apk)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "ERROR: No APK found in release output directory"
+            exit 1
+          fi
+          APK_PATH="${files[0]}"
+          echo "Found APK: ${APK_PATH}"
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${{ github.ref_name }}"
           else
             TAG="${{ steps.version.outputs.version }}"
           fi
-          gh release create "${TAG}" "${APK_PATH}:${APK_NAME}" \
+          gh release create "${TAG}" "${APK_PATH}" \
             --title "Cassidey ${{ steps.version.outputs.version }}" \
             --notes "Automated build from GitHub Actions" \
             --repo "${{ github.repository }}"
+          # Rename the asset to a friendly name
+          gh release upload "${TAG}" "${APK_PATH}#Cassidey-${{ steps.version.outputs.version }}.apk" \
+            --repo "${{ github.repository }}" --clobber
