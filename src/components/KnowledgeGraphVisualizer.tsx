@@ -158,8 +158,8 @@ export function KnowledgeGraphVisualizer({ data, className, isLearning }: { data
           
           node.__core = core;
           node.__shell = shell;
-          node.__rotationSpeed = (Math.random() - 0.5) * 0.0225;
-          node.__pulseSpeed = 0.9 + Math.random() * 1.35;
+          node.__rotationSpeed = (Math.random() - 0.5) * 0.0055;
+          node.__pulseSpeed = 0.22 + Math.random() * 0.33;
           node.__pulseOffset = Math.random() * Math.PI * 2;
           
           return group;
@@ -176,7 +176,7 @@ export function KnowledgeGraphVisualizer({ data, className, isLearning }: { data
         linkWidth={(link: any) => Math.sqrt(link.confidence || 0.5) * 2.5}
         linkDirectionalParticles={(link: any) => link.confidence ? Math.floor(link.confidence * 8) : 3}
         linkDirectionalParticleWidth={2.5}
-        linkDirectionalParticleSpeed={0.0036}
+        linkDirectionalParticleSpeed={0.00088}
         linkDirectionalParticleColor={(link: any) => {
           const cat = link.source?.category || 'default';
           return getColor(cat, true);
@@ -191,13 +191,13 @@ export function KnowledgeGraphVisualizer({ data, className, isLearning }: { data
         onBackgroundClick={() => setSelectedNode(null)}
         onEngineTick={() => {
           if (!graphRef.current) return;
-          const time = Date.now() * 0.00045;
+          const time = Date.now() * 0.00011;
           
           // Auto rotate the entire graph slightly
           const controls = graphRef.current.controls();
           if (controls && !controls.autoRotate) {
              controls.autoRotate = true;
-             controls.autoRotateSpeed = 0.225;
+             controls.autoRotateSpeed = 0.055;
           }
 
           graphData.nodes.forEach((node: any) => {
