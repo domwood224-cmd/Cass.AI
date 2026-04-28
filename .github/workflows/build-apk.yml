@@ -52,7 +52,7 @@ jobs:
         run: chmod +x android/gradlew
 
       - name: Decode signing keystore
-        run: echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
 
       - name: Set version from git tag
         id: version
