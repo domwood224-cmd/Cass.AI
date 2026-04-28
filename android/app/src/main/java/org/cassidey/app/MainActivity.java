@@ -15,8 +15,22 @@ import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+
 public class MainActivity extends BridgeActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
+
+    // ── Persistent shell process fields ──
+    private Process shellProcess = null;
+    private BufferedReader shellReader = null;
+    private BufferedWriter shellWriter = null;
+    private StringBuilder outputBuffer = new StringBuilder();
+    private boolean shellRunning = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -95,6 +109,12 @@ public class MainActivity extends BridgeActivity {
         }, 300);
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        destroyShell();
+    }
+
     /** JavaScript interface class exposed to the WebView */
     public class NativeBridge {
         @JavascriptInterface
@@ -121,7 +141,212 @@ public class MainActivity extends BridgeActivity {
         public float getDensity() {
             return MainActivity.this.getResources().getDisplayMetrics().density;
         }
+
+        // ═══════════════════════════════════════════════════════════
+        //  SHELL TERMINAL METHODS
+        // ═══════════════════════════════════════════════════════════
+
+        /** Initialize a persistent shell session. Returns exit code string. */
+        @JavascriptInterface
+        public String shellInit() {
+            return initShell();
+        }
+
+        /** Write a command string to the shell's stdin. */
+        @JavascriptInterface
+        public void shellWrite(String input) {
+            writeShell(input);
+        }
+
+        /** Read all available output from the shell since last read. */
+        @JavascriptInterface
+        public String shellRead() {
+            return readShell();
+        }
+
+        /** Execute a single command (no persistent session needed). */
+        @JavascriptInterface
+        public String shellExec(String command) {
+            return execCommand(command);
+        }
+
+        /** Resize the shell's terminal (for future PTY support). */
+        @JavascriptInterface
+        public void shellResize(int cols, int rows) {
+            // Placeholder for future PTY resize support
+        }
+
+        /** Destroy the persistent shell session. */
+        @JavascriptInterface
+        public void shellDestroy() {
+            destroyShell();
+        }
+
+        /** Check if the shell is currently running. */
+        @JavascriptInterface
+        public boolean shellIsRunning() {
+            return shellRunning;
+        }
+
+        /** Get the current working directory. */
+        @JavascriptInterface
+        public String shellGetCwd() {
+            return execCommand("pwd").trim();
+        }
+
+        /** Get the shell type. */
+        @JavascriptInterface
+        public String shellGetType() {
+            // Try common shells in order of preference
+            String[] shells = {"/system/bin/bash", "/system/bin/sh", "/data/data/com.termux/files/usr/bin/bash", "/data/data/com.termux/files/usr/bin/zsh"};
+            for (String shell : shells) {
+                if (new File(shell).exists()) return shell;
+            }
+            // Fallback: use whatever sh is available
+            return "/system/bin/sh";
+        }
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  SHELL IMPLEMENTATION
+    // ═══════════════════════════════════════════════════════════
+
+    private synchronized String initShell() {
+        try {
+            destroyShell(); // Clean up any existing session
+
+            String[] cmd;
+            String shellPath = "/system/bin/sh";
+
+            // Try to find the best available shell
+            String[] preferredShells = {
+                "/data/data/com.termux/files/usr/bin/bash",
+                "/system/bin/bash",
+                "/system/xbin/bash",
+                "/system/bin/sh"
+            };
+            for (String s : preferredShells) {
+                if (new File(s).exists()) {
+                    shellPath = s;
+                    break;
+                }
+            }
+
+            // Use interactive mode with proper environment
+            String[] env = {
+                "TERM=xterm-256color",
+                "HOME=" + System.getProperty("user.home", "/data/data/org.cassidey.app"),
+                "PATH=/system/bin:/system/xbin:/vendor/bin:/usr/bin:/usr/local/bin:/sbin",
+                "SHELL=" + shellPath,
+                "ANDROID_ROOT=/system",
+                "USER=root",
+                "HOSTNAME=cassidey"
+            };
+
+            ProcessBuilder pb = new ProcessBuilder(shellPath, "-i");
+            pb.environment().put("TERM", "xterm-256color");
+            pb.environment().put("HOME", System.getProperty("user.home", "/data/data/org.cassidey.app"));
+            pb.environment().put("PATH", "/system/bin:/system/xbin:/vendor/bin:/usr/bin:/usr/local/bin:/sbin");
+            pb.environment().put("SHELL", shellPath);
+            pb.environment().put("ANDROID_ROOT", "/system");
+            pb.environment().put("USER", "root");
+            pb.environment().put("HOSTNAME", "cassidey");
+            pb.redirectErrorStream(true);
+            pb.directory(new File("/data/data/org.cassidey.app"));
+
+            shellProcess = pb.start();
+            shellWriter = new BufferedWriter(new OutputStreamWriter(shellProcess.getOutputStream()));
+            shellReader = new BufferedReader(new InputStreamReader(shellProcess.getInputStream()));
+            outputBuffer = new StringBuilder();
+            shellRunning = true;
+
+            // Start a background thread to continuously read output
+            new Thread(() -> {
+                char[] buf = new char[4096];
+                try {
+                    while (shellRunning && shellReader != null) {
+                        int n = shellReader.read(buf);
+                        if (n == -1) break;
+                        String chunk = new String(buf, 0, n);
+                        synchronized (MainActivity.this) {
+                            outputBuffer.append(chunk);
+                        }
+                        Thread.sleep(10); // Small delay to batch output
+                    }
+                } catch (IOException | InterruptedException e) {
+                    // Shell process ended
+                }
+                shellRunning = false;
+            }).start();
+
+            // Give the shell a moment to start, then write a welcome
+            Thread.sleep(100);
+
+            return "OK";
+        } catch (Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    private synchronized void writeShell(String input) {
+        if (shellWriter == null || !shellRunning) return;
+        try {
+            shellWriter.write(input + "\n");
+            shellWriter.flush();
+        } catch (IOException e) {
+            shellRunning = false;
+        }
+    }
+
+    private synchronized String readShell() {
+        String result;
+        synchronized (this) {
+            result = outputBuffer.toString();
+            outputBuffer = new StringBuilder();
+        }
+        return result;
+    }
+
+    private synchronized String execCommand(String command) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c", command);
+            pb.redirectErrorStream(true);
+            pb.directory(new File("/data/data/org.cassidey.app"));
+            Process p = pb.start();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (output.length() > 0) output.append("\n");
+                output.append(line);
+            }
+            p.waitFor();
+            String result = output.toString();
+            return result.isEmpty() ? "" : result;
+        } catch (Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    private synchronized void destroyShell() {
+        shellRunning = false;
+        try {
+            if (shellWriter != null) { shellWriter.close(); shellWriter = null; }
+        } catch (IOException e) {}
+        try {
+            if (shellReader != null) { shellReader.close(); shellReader = null; }
+        } catch (IOException e) {}
+        if (shellProcess != null) {
+            shellProcess.destroy();
+            try { shellProcess.waitFor(); } catch (InterruptedException e) {}
+            shellProcess = null;
+        }
+        outputBuffer = new StringBuilder();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  DISPLAY HELPERS
+    // ═══════════════════════════════════════════════════════════
 
     /** Get the status bar height in pixels via WindowInsets (API 20+) or resource */
     private int getStatusBarHeight() {

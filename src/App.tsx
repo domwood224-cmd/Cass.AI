@@ -70,6 +70,7 @@ import { cn } from './lib/utils';
 import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
+import { LinuxTerminal } from './components/LinuxTerminal';
 
 // Lazy-load the heavy 3D graph component
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
@@ -130,7 +131,7 @@ function learningTypeToSkillCategories(type: LearningType): SkillCategory[] {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'terminal' | 'settings'>('chat');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string; timestamp: number }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -1065,7 +1066,15 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* ═══════════ SETTINGS TAB (UPGRADED) ═══════════ */}
+            {/* ═══════════ TERMINAL TAB ═══════════ */}
+            {activeTab === 'terminal' && (
+              <motion.div key="terminal" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }} className="w-full flex flex-col pt-12">
+                <LinuxTerminal />
+              </motion.div>
+            )}
+
+            {/* ═══════════ SETTINGS TAB ═══════════ */}
             {activeTab === 'settings' && (
               <motion.div key="settings" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.3 }} className="w-full p-4 md:p-8 max-w-4xl mx-auto pt-20">
@@ -1258,10 +1267,10 @@ export default function App() {
 
       <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
-        <TabButton icon={<GitBranch className="w-5 h-5" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
+        <TabButton icon={<Terminal className="w-5 h-5" />} active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} label="Terminal" />
         <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
         <TabButton icon={<Orbit className="w-5 h-5" />} active={activeTab === 'graph'} onClick={() => setActiveTab('graph')} label="Graph" />
-        <TabButton icon={<Settings className="w-5 h-5" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Interface" />
+        <TabButton icon={<Settings className="w-5 h-5" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
       </nav>
     </div>
     </ErrorBoundary>
