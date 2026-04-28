@@ -611,7 +611,7 @@ function MiniStat({ label, value, icon }: { label: string; value: string | numbe
   );
 }
 
-function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: ExtendedSkill; progress: number; canUnlock: boolean; unlockInfo: { met: boolean; prereqProgress: { id: string; name: string; current: number; required: number }[]; xpProgress: number } }) {
+function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: ExtendedSkill; progress: number; canUnlock: boolean; unlockInfo: { met: boolean; prereqProgress: { id: string; name: string; current: number; required: number }[]; xpProgress: number }; key?: string }) {
   const isLocked = !canUnlock;
   const tierConfig = TIER_CONFIG[skill.tier];
   const [showDetails, setShowDetails] = useState(false);

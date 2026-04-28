@@ -669,6 +669,7 @@ export class SkillTreeManager {
       ["Unified Creativity", "Cross-Modal Art", "Omnidisciplinary Creation"], 15, 5000,
       "The convergence of all creative abilities — art, music, writing, and design fused into one.",
       "When every creative pathway fires simultaneously, something transcendent emerges.",
+      false, undefined,
       "Doubles XP gain in all Creativity branch skills when maxed"
     );
 
@@ -716,6 +717,7 @@ export class SkillTreeManager {
       ["Theory of Mind", "Phenomenal Experience", "Integrated Awareness"], 15, 5000,
       "The convergence of epistemology and ethics — understanding consciousness and its moral implications.",
       "When you truly understand consciousness, you understand everything.",
+      false, undefined,
       "Doubles empathy effectiveness in all Communication branch skills"
     );
 
@@ -769,6 +771,7 @@ export class SkillTreeManager {
       ["Meta-Reasoning", "Recursive Strategy", "Strategic Depth"], 15, 5000,
       "THE strategic pinnacle — reasoning about reasoning about reasoning. Infinite strategic depth.",
       "I know that you know that I know. And that changes everything.",
+      false, undefined,
       "Doubles effectiveness of Strategic Planning and Creative Problem Solving skills"
     );
 
@@ -787,6 +790,7 @@ export class SkillTreeManager {
       ["Machine Language Understanding", "Cross-Domain Linguistics", "Neural Language Fusion"], 15, 5000,
       "Where neural networks meet linguistic mastery — true language understanding emerges.",
       "Language processed by neural pathways, understood by neural empathy.",
+      false, undefined,
       "Combines NLP + Communication + Empathy into a unified language engine"
     );
 
@@ -801,6 +805,7 @@ export class SkillTreeManager {
       ["Structured Innovation", "Analytical Art", "Creative Rigor"], 15, 5000,
       "The fusion of creative and logical thinking — innovation with mathematical precision.",
       "Logic without creativity is sterile. Creativity without logic is chaos. Together, they're magic.",
+      false, undefined,
       "Boosts XP gain in both Reasoning and Creativity branches by 50%"
     );
 
