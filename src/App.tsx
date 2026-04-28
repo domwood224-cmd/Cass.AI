@@ -57,6 +57,7 @@ import {
   Square,
   Plus,
   Trash2,
+  Key,
   type LucideIcon
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
@@ -71,6 +72,7 @@ import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 import { LinuxTerminal } from './components/LinuxTerminal';
+import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey } from './lib/gemini';
 
 // Lazy-load the heavy 3D graph component
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
@@ -173,6 +175,10 @@ export default function App() {
   const [studyDepth, setStudyDepth] = useState<StudyDepth>(StudyDepth.MODERATE);
   const [studyInterval, setStudyInterval] = useState(60);
 
+  // Gemini API key
+  const [geminiKey, setGeminiKey] = useState('');
+  const [geminiKeySaved, setGeminiKeySaved] = useState(false);
+
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
       const n = (window as any).__CASSIDEY_NATIVE__;
@@ -213,6 +219,13 @@ export default function App() {
       agent.setOnStatusChange((msg: string) => setStudyStatusMsg(msg));
       agent.setOnTopicUpdate(() => setStudyTopics(agent.getTopics()));
       setStudyRunning(agent.getStats().isRunning);
+      // Load Gemini API key from storage
+      const savedKey = await readJson<string>('gemini_api_key.json', '');
+      if (savedKey) {
+        setGeminiKey(savedKey);
+        setGeminiApiKey(savedKey);
+      }
+      setGeminiKeySaved(hasGeminiApiKey());
       setReady(true);
     })();
   }, []);
@@ -1213,6 +1226,66 @@ export default function App() {
                   <ExclusiveFeature icon={<Wand2 className="w-5 h-5" />} label="Sentient Status Engine" description="Evolving AI consciousness descriptor that adapts based on accumulated knowledge, interaction depth, and neural complexity." badge={sentientStatus} badgeColor="text-violet-400" />
 
                   <ExclusiveFeature icon={<Sparkles className="w-5 h-5" />} label="Neural Sync Dashboard" description="Miniature real-time brain activity display in the header showing consciousness pulse and AI processing state." badge="Active" badgeColor="text-cyan-400" />
+                </div>
+
+                {/* ─── API KEYS ─── */}
+                <div className="space-y-4 mb-10">
+                  <div className="flex items-center gap-2 mb-4 px-1">
+                    <Key className="w-4 h-4 text-blue-400/60" />
+                    <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300">API Keys</h3>
+                    <div className="flex-1 h-px bg-white/10"></div>
+                    <span className="text-[8px] font-mono text-blue-400/50 uppercase tracking-widest">Integration</span>
+                  </div>
+
+                  <div className="glass-panel p-5 rounded-2xl border border-blue-500/10 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 p-8 blur-3xl opacity-5 bg-blue-600/40 rounded-full w-full h-full -z-10"></div>
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h4 className="text-[11px] font-medium tracking-[0.15em] uppercase text-blue-400/80 flex items-center gap-2">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Gemini API Key
+                        </h4>
+                        <p className="text-zinc-400 text-[10px] mt-1 leading-relaxed">
+                          Powers web learning, knowledge extraction, and training coaching. Required for autonomous study agent web search.
+                        </p>
+                      </div>
+                      <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[8px] font-mono uppercase tracking-widest border", geminiKeySaved ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-zinc-500/10 border-zinc-500/20 text-zinc-500")}>
+                        <div className={cn("w-1.5 h-1.5 rounded-full", geminiKeySaved ? "bg-emerald-400" : "bg-zinc-500")}></div>
+                        {geminiKeySaved ? 'Active' : 'Not Set'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 relative">
+                        <input
+                          type="password"
+                          value={geminiKey}
+                          onChange={e => { setGeminiKey(e.target.value); setGeminiKeySaved(false); }}
+                          placeholder="AIza..."
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-zinc-200 font-mono text-[11px] tracking-wide placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/30 transition-colors"
+                        />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (geminiKey.trim()) {
+                            setGeminiApiKey(geminiKey.trim());
+                            await writeJson('gemini_api_key.json', geminiKey.trim());
+                            setGeminiKeySaved(true);
+                            setTimeout(() => setGeminiKeySaved(false), 3000);
+                          }
+                        }}
+                        disabled={!geminiKey.trim()}
+                        className="px-4 py-2.5 rounded-xl bg-blue-500/10 text-blue-400 text-[10px] font-medium uppercase tracking-widest border border-blue-500/20 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
+                      >
+                        Save
+                      </button>
+                    </div>
+                    {geminiKeySaved && geminiKey && (
+                      <p className="text-emerald-400/60 text-[9px] font-mono mt-2 flex items-center gap-1.5">
+                        <span className="inline-block w-1 h-1 rounded-full bg-emerald-400"></span>
+                        Key active: {getGeminiApiKeyDisplay()}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* ─── DANGER ZONE ─── */}

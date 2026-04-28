@@ -6,6 +6,7 @@
 // The AI engine (AdvancedLearningEngine) is always the primary brain.
 
 import { GoogleGenAI } from "@google/genai";
+import { getGenAI as getSharedGenAI, hasGeminiApiKey, setGeminiApiKey } from "../gemini";
 
 export interface TrainingInsight {
   category: 'knowledge_extraction' | 'response_coaching' | 'fact_check' | 'concept_clarification';
@@ -33,19 +34,23 @@ export class TrainingHelper {
 
   private getGenAI(): GoogleGenAI | null {
     if (!this.genAI) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return null;
-      this.genAI = new GoogleGenAI({ apiKey });
+      this.genAI = getSharedGenAI();
     }
     return this.genAI;
   }
 
   hasAPIKey(): boolean {
-    return !!process.env.GEMINI_API_KEY;
+    return hasGeminiApiKey();
   }
 
   getGenAIInstance(): GoogleGenAI | null {
     return this.getGenAI();
+  }
+
+  /** Inject a runtime API key (from user settings) */
+  setApiKey(key: string): void {
+    setGeminiApiKey(key);
+    this.genAI = null;
   }
 
   // ─── Knowledge Extraction ───

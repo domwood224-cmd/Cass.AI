@@ -15,6 +15,10 @@ on:
           - 'true'
           - 'false'
 
+concurrency:
+  group: apk-build
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
