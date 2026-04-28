@@ -1,22 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- Cassidey brand theme — opaque system bars so WebView fills usable area correctly -->
+    <!-- Cassidey brand theme — transparent system bars for edge-to-edge WebView -->
     <style name="CassideyTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">#050505</item>
-        <item name="android:navigationBarColor">#050505</item>
-        <item name="android:statusBarColor">#050505</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:navigationBarDividerColor">@android:color/transparent</item>
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowTranslucentNavigation">true</item>
     </style>
 
     <!-- Splash screen variant -->
     <style name="CassideyTheme.Splash" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">#050505</item>
-        <item name="android:navigationBarColor">#050505</item>
-        <item name="android:statusBarColor">#050505</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:navigationBarDividerColor">@android:color/transparent</item>
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowTranslucentNavigation">true</item>
     </style>
 
 </resources>

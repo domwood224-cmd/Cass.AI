@@ -51,6 +51,28 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // ── Native bridge: exact pixel insets from Android system bars ──
+  const [insets, setInsets] = useState({ statusBar: 0, navBar: 0 });
+
+  // Listen for the native bridge to inject system bar heights
+  useEffect(() => {
+    // Check if native bridge already injected values (race condition)
+    if ((window as any).__CASSIDEY_NATIVE__) {
+      const n = (window as any).__CASSIDEY_NATIVE__;
+      setInsets({ statusBar: n.statusBarHeight || 0, navBar: n.navigationBarHeight || 0 });
+      return;
+    }
+    // Otherwise wait for the event
+    const handler = () => {
+      const n = (window as any).__CASSIDEY_NATIVE__;
+      if (n) {
+        setInsets({ statusBar: n.statusBarHeight || 0, navBar: n.navigationBarHeight || 0 });
+      }
+    };
+    window.addEventListener('nativeInsetsReady', handler);
+    return () => window.removeEventListener('nativeInsetsReady', handler);
+  }, []);
+
   // ── One-time init: migrate localStorage → SD card, then load from SD card ──
   useEffect(() => {
     (async () => {
@@ -146,8 +168,8 @@ export default function App() {
         <div className="absolute top-[30%] left-[20%] w-[40%] h-[40%] bg-white/20 rounded-full blur-[100px]"></div>
       </div>
       
-      {/* Compact Mobile Header */}
-      <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0">
+      {/* Compact Mobile Header — pushed down by exact native status bar height */}
+      <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0" style={{ paddingTop: insets.statusBar + 'px' }}>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10">
             <Cpu className="text-emerald-200/80 w-3.5 h-3.5" />
@@ -163,8 +185,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area - padding bottom for fixed tab bar */}
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col pb-14">
+      {/* Main Content Area */}
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: (56 + insets.navBar) + 'px' }}>
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
             {activeTab === 'chat' && (
@@ -467,8 +489,8 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Compact Bottom Tab Bar - pinned to very bottom of screen */}
-      <nav className="absolute bottom-0 left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl">
+      {/* Bottom Tab Bar — sits above the native navigation bar using exact pixel offset */}
+      <nav className="absolute left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl" style={{ bottom: insets.navBar + 'px' }}>
         <TabButton 
           icon={<MessageSquare className="w-[18px] h-[18px]" />} 
           active={activeTab === 'chat'} 
