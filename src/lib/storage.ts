@@ -9,7 +9,8 @@
  *   /storage/emulated/0/CassideyAI/
  *     ├── messages.json          — Chat history
  *     ├── learning_progress.json — Knowledge graph, vocabulary, mastery
- *     └── skill_progress.json    — Skill levels & XP
+ *     ├── skill_progress.json    — Skill levels & XP
+ *     └── ai_engine.json         — Full AI engine state (KG, vocab, web topics, mastery)
  *
  * Falls back to localStorage when running in a browser (dev / GitHub Pages).
  */
@@ -150,6 +151,7 @@ export async function purgeAll(): Promise<void> {
     'cassidey_messages.json',
     'cassidey_learning_progress.json',
     'cassidey_skill_progress.json',
+    'cassidey_ai_engine.json',
   ];
   for (const f of files) await removeFile(f);
 
@@ -157,6 +159,7 @@ export async function purgeAll(): Promise<void> {
   localStorage.removeItem('cassidey_messages');
   localStorage.removeItem('cassidey_learning_progress');
   localStorage.removeItem('cassidey_skill_progress');
+  localStorage.removeItem('cassidey_ai_engine');
 }
 
 // ── Convenience file name constants ─────────────────────────────────
@@ -164,4 +167,5 @@ export const STORAGE_KEYS = {
   MESSAGES: 'cassidey_messages.json',
   LEARNING: 'cassidey_learning_progress.json',
   SKILLS: 'cassidey_skill_progress.json',
+  AI_ENGINE: 'cassidey_ai_engine.json',
 } as const;

@@ -307,4 +307,54 @@ export class NeuralKnowledgeGraph {
   getTotalNodes(): number { return this.nodes.size; }
   getTotalEdges(): number { return this.totalEdges; }
   getLastUpdateTime(): number { return this.lastUpdateTime; }
+
+  // ─── Persistence (save/load from SD card) ───
+
+  exportData(): string {
+    const nodes = Array.from(this.nodes.entries());
+    const edges: { source: string; target: string; edge: KGEdge }[] = [];
+    for (const [source, edgeSet] of this.adjacencyList.entries()) {
+      for (const edge of edgeSet) {
+        edges.push({ source, target: String(edge.target), edge });
+      }
+    }
+    // Serialize embeddings (trimmed for storage size)
+    const embeddings: Record<string, number[]> = {};
+    for (const [k, v] of this.nodeEmbeddings.entries()) {
+      embeddings[k] = v;
+    }
+    return JSON.stringify({ nodes, edges, embeddings, nodeIdCounter: this.nodeIdCounter, totalEdges: this.totalEdges, lastUpdateTime: this.lastUpdateTime });
+  }
+
+  importData(json: string): boolean {
+    try {
+      const data = JSON.parse(json);
+      if (!data || !data.nodes) return false;
+
+      this.nodes.clear();
+      this.adjacencyList.clear();
+      this.nodeEmbeddings.clear();
+      this.nodeIdCounter = data.nodeIdCounter || 0;
+      this.totalEdges = data.totalEdges || 0;
+      this.lastUpdateTime = data.lastUpdateTime || 0;
+
+      for (const [label, node] of data.nodes as [string, KGNode][]) {
+        this.nodes.set(label, node);
+      }
+      for (const { source, edge } of data.edges as { source: string; target: string; edge: KGEdge }[]) {
+        if (!this.adjacencyList.has(source)) this.adjacencyList.set(source, new Set());
+        this.adjacencyList.get(source)!.add(edge);
+      }
+      if (data.embeddings) {
+        for (const [k, v] of Object.entries(data.embeddings)) {
+          this.nodeEmbeddings.set(k, v as number[]);
+        }
+      }
+      console.log(`[KnowledgeGraph] Loaded ${this.nodes.size} nodes, ${this.totalEdges} edges`);
+      return true;
+    } catch (e) {
+      console.error('[KnowledgeGraph] Failed to import data:', e);
+      return false;
+    }
+  }
 }

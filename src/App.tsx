@@ -105,6 +105,7 @@ export default function App() {
       const savedMsgs = await readJson<{ role: string; content: string }[]>(STORAGE_KEYS.MESSAGES, []);
       if (savedMsgs.length > 0) setMessages(savedMsgs);
       await skillManager.loadLocalProgress();
+      await aiEngine.loadLocalProgress();
       setSkills(skillManager.getAllSkills());
       setAiStats(aiEngine.getStats());
       setReady(true);
@@ -196,6 +197,7 @@ export default function App() {
     }
 
     await skillManager.saveLocalProgress();
+    await aiEngine.saveLocalProgress();
     setMessages(prev => [...prev, { role: 'assistant', content: aiResponse }]);
     setAiStats(aiEngine.getStats());
     setSkills(skillManager.getAllSkills());
@@ -246,7 +248,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: (56 + insets.navBar) + 'px' }}>
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: '56px' }}>
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
             {activeTab === 'chat' && (
@@ -552,7 +554,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="absolute left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl" style={{ bottom: insets.navBar + 'px' }}>
+      <nav className="absolute bottom-0 left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-[18px] h-[18px]" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
         <TabButton icon={<GitBranch className="w-[18px] h-[18px]" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
         <TabButton icon={<Brain className="w-[18px] h-[18px]" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />

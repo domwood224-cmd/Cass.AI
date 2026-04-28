@@ -16,6 +16,7 @@ import { NeuralKnowledgeGraph } from './neural-knowledge-graph';
 import { TransferLearningManager } from './transfer-learning-manager';
 import { WebLearner, WebSearchResult } from './web-learner';
 import { TrainingHelper } from './training-helper';
+import { readJson, writeJson, STORAGE_KEYS } from '../storage';
 
 const BASE_LEARNING_RATE = 0.001;
 const ADAPTIVE_LR_MIN = 0.0001;
@@ -544,6 +545,79 @@ export class AdvancedLearningEngine {
     this.priorKnowledgeRecallCount = 0;
     const defaults: string[] = ['greetings', 'questions', 'commands', 'conversations', 'facts', 'reasoning', 'creativity', 'empathy', 'web_learning', 'knowledge_acquisition'];
     for (const concept of defaults) this.conceptMastery[concept] = 0;
+  }
+
+  // ─── SD CARD PERSISTENCE ───
+  // Saves all AI engine state to the SD card so it survives restarts
+
+  async saveLocalProgress(): Promise<void> {
+    try {
+      const data = {
+        conceptMastery: this.conceptMastery,
+        performanceMetrics: this.performanceMetrics,
+        totalLearningIterations: this.totalLearningIterations,
+        currentLearningRate: this.currentLearningRate,
+        averageLoss: this.averageLoss,
+        webSearchCount: this.webSearchCount,
+        priorKnowledgeRecallCount: this.priorKnowledgeRecallCount,
+        vocabulary: Array.from(this.vocabulary.entries()),
+        conversationContext: this.conversationContext,
+        knowledgeGraph: this.knowledgeGraph.exportData(),
+        webLearnedTopics: this.webLearner.exportLearnedTopics(),
+        transferSuccessRate: this.transferLearningManager.getTransferSuccessRate(),
+        averageTransferBenefit: this.transferLearningManager.getAverageTransferBenefit(),
+        savedAt: Date.now(),
+      };
+      await writeJson(STORAGE_KEYS.AI_ENGINE, data);
+      console.log(`[AIEngine] Saved to SD card (${this.knowledgeGraph.getTotalNodes()} KG nodes, ${this.vocabulary.size} vocab entries)`);
+    } catch (e) {
+      console.error('[AIEngine] Failed to save progress:', e);
+    }
+  }
+
+  async loadLocalProgress(): Promise<void> {
+    try {
+      const data = await readJson<any>(STORAGE_KEYS.AI_ENGINE, null);
+      if (!data) return;
+
+      // Restore concept mastery
+      if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
+
+      // Restore performance metrics
+      if (data.performanceMetrics) this.performanceMetrics = data.performanceMetrics;
+
+      // Restore learning state
+      if (data.totalLearningIterations) this.totalLearningIterations = data.totalLearningIterations;
+      if (data.currentLearningRate) this.currentLearningRate = data.currentLearningRate;
+      if (data.averageLoss) this.averageLoss = data.averageLoss;
+      if (data.webSearchCount) this.webSearchCount = data.webSearchCount;
+      if (data.priorKnowledgeRecallCount) this.priorKnowledgeRecallCount = data.priorKnowledgeRecallCount;
+
+      // Restore vocabulary
+      if (data.vocabulary && Array.isArray(data.vocabulary)) {
+        this.vocabulary.clear();
+        for (const [word, info] of data.vocabulary) {
+          this.vocabulary.set(word, info as { word: string; frequency: number; sentiment: number });
+        }
+      }
+
+      // Restore conversation context
+      if (data.conversationContext) this.conversationContext = data.conversationContext;
+
+      // Restore knowledge graph
+      if (data.knowledgeGraph) {
+        this.knowledgeGraph.importData(data.knowledgeGraph);
+      }
+
+      // Restore web learned topics
+      if (data.webLearnedTopics) {
+        this.webLearner.importLearnedTopics(data.webLearnedTopics);
+      }
+
+      console.log(`[AIEngine] Loaded from SD card (iter ${this.totalLearningIterations}, ${this.knowledgeGraph.getTotalNodes()} KG nodes, ${this.webLearner.getLearnedTopicCount()} web topics)`);
+    } catch (e) {
+      console.error('[AIEngine] Failed to load progress:', e);
+    }
   }
 
   shutdown(): void {
