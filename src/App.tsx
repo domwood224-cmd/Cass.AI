@@ -248,7 +248,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col">
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: '64px' }}>
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
             {activeTab === 'chat' && (
@@ -554,7 +554,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="h-16 glass-nav flex items-center justify-around px-2 z-40 shrink-0 backdrop-blur-2xl safe-area-bottom pb-2">
+      <nav className="absolute bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
         <TabButton icon={<GitBranch className="w-5 h-5" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
         <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
