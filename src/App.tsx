@@ -554,7 +554,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <nav className="absolute bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
+      <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
         <TabButton icon={<GitBranch className="w-5 h-5" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
         <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
