@@ -19,6 +19,21 @@
   body {
     @apply bg-[var(--color-system-bg)] text-zinc-100 font-sans antialiased overflow-hidden;
   }
+
+  /* Safe area insets for notched phones */
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Prevent text selection on UI elements */
+  button, nav, header {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 .command-line-input {

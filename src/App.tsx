@@ -111,11 +111,11 @@ export default function App() {
     <div className="flex flex-col h-[100dvh] bg-[var(--color-system-bg)] overflow-hidden font-sans relative">
       <div className="nerve-line"></div>
       
-      {/* Corner Micro-text Warnings */}
-      <div className="absolute top-4 left-4 z-50 text-[var(--color-glitch-red)] text-[8px] font-mono tracking-widest font-bold opacity-80 pointer-events-none">
+      {/* Corner Micro-text Warnings - hidden on small screens */}
+      <div className="absolute top-4 left-4 z-50 text-[var(--color-glitch-red)] text-[8px] font-mono tracking-widest font-bold opacity-80 pointer-events-none hidden md:block">
         VOLTAGE_PEAK
       </div>
-      <div className="absolute top-4 right-4 z-50 text-[var(--color-glitch-red)] text-[8px] font-mono tracking-widest font-bold opacity-80 pointer-events-none">
+      <div className="absolute top-4 right-4 z-50 text-[var(--color-glitch-red)] text-[8px] font-mono tracking-widest font-bold opacity-80 pointer-events-none hidden md:block">
         NEURAL_OVERRIDE
       </div>
 
@@ -126,20 +126,20 @@ export default function App() {
         <div className="absolute top-[30%] left-[20%] w-[40%] h-[40%] bg-white/20 rounded-full blur-[100px]"></div>
       </div>
       
-      {/* Mobile Top Header */}
-      <header className="h-20 pt-4 flex items-center justify-between px-6 bg-transparent z-30 shrink-0 safe-area-top">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10 backdrop-blur-md">
-            <Cpu className="text-emerald-200/80 w-4 h-4" />
+      {/* Compact Mobile Header */}
+      <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0 safe-area-top">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10">
+            <Cpu className="text-emerald-200/80 w-3.5 h-3.5" />
           </div>
-          <span className="text-lg font-light tracking-[0.15em] text-zinc-100 flex items-baseline gap-2 drop-shadow-md">
-            CASSIDEY 
-            <span className="text-zinc-300 font-light text-[9px] tracking-[0.4em] uppercase">V2.0.4</span>
+          <span className="text-sm font-light tracking-[0.15em] text-zinc-100 flex items-baseline gap-1.5">
+            CASSIDEY
+            <span className="text-zinc-400 font-light text-[8px] tracking-[0.3em]">V2.0.4</span>
           </span>
         </div>
-        <div className="flex items-center gap-2 bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl px-3.5 py-1.5 rounded-full border border-white/10 shadow-[inset_0_1px_rgba(255,255,255,0.1)]">
-           <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.5)]"></div>
-           <span className="text-[9px] font-medium text-zinc-300 uppercase tracking-widest">Active</span>
+        <div className="flex items-center gap-1.5 bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl px-2.5 py-1 rounded-full border border-white/10">
+           <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+           <span className="text-[8px] font-medium text-zinc-300 uppercase tracking-widest">Active</span>
         </div>
       </header>
 
@@ -153,18 +153,18 @@ export default function App() {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
-                className="max-w-4xl mx-auto w-full min-h-full flex flex-col p-4 md:p-6"
+                className="max-w-4xl mx-auto w-full min-h-full flex flex-col px-3 py-2 md:p-6"
               >
-                <div className="absolute top-6 left-6 z-10 pointer-events-none">
+                <div className="hidden md:block absolute top-6 left-6 z-10 pointer-events-none">
                   <h2 className="text-2xl font-light text-zinc-100 tracking-[0.2em] uppercase drop-shadow-md">Interface</h2>
                   <p className="text-zinc-300 text-[11px] uppercase tracking-[0.1em] font-light mt-1 drop-shadow-md">Direct Input Link</p>
                 </div>
-                <div className="flex-1 space-y-6 pb-12 pt-16">
+                <div className="flex-1 space-y-4 pb-6 pt-2 md:pt-16">
                   {messages.length === 0 && (
-                    <div className="min-h-[60vh] flex flex-col items-center justify-center text-center space-y-8 px-4 opacity-50 relative z-10">
-                      <div className="space-y-3">
-                        <h2 className="text-3xl font-display text-[var(--color-electric-cyan)] tracking-[0.3em] font-medium uppercase drop-shadow-md">NODE ACTIVE</h2>
-                        <p className="text-[var(--color-electric-cyan)] text-[10px] tracking-[0.2em] font-mono mx-auto leading-relaxed uppercase opacity-70">Awaiting direct injection...</p>
+                    <div className="min-h-[40vh] md:min-h-[60vh] flex flex-col items-center justify-center text-center space-y-6 px-4 opacity-50 relative z-10">
+                      <div className="space-y-2">
+                        <h2 className="text-xl md:text-3xl font-display text-[var(--color-electric-cyan)] tracking-[0.3em] font-medium uppercase drop-shadow-md">NODE ACTIVE</h2>
+                        <p className="text-[var(--color-electric-cyan)] text-[9px] tracking-[0.2em] font-mono mx-auto leading-relaxed uppercase opacity-70">Awaiting direct injection...</p>
                       </div>
                     </div>
                   )}
@@ -174,13 +174,13 @@ export default function App() {
 
                     return (
                       <div key={i} className={cn(
-                        "flex flex-col relative z-10",
+                        "flex flex-col relative z-10 py-1",
                         m.role === 'user' ? "items-end" : "items-start",
                         hasGlitch && "active-glitch glitch-container"
                       )}>
                         {m.role === 'user' ? (
                           <div className={cn(
-                            "text-right text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] md:text-sm tracking-tight leading-relaxed max-w-[85%]",
+                            "text-right text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] md:text-sm tracking-tight leading-relaxed max-w-[85%] px-3 py-1.5 rounded-2xl bg-white/[0.03]",
                             isMemoryWeighted && "memory-weighted"
                           )}>
                             {m.content}
@@ -188,20 +188,14 @@ export default function App() {
                         ) : (
                           <div className="flex flex-col max-w-[90%] md:max-w-[85%]">
                             {/* Header Shard Effect */}
-                            <div className="flex items-center gap-2 mb-1">
-                              <div className="h-4 w-1 bg-[var(--color-violet)] shadow-[0_0_8px_var(--color-violet)]"></div>
-                              <span className="font-display font-bold text-[var(--color-violet)] text-[10px] uppercase tracking-[0.2em]">[RESPONSE_NODE_ACTIVE]</span>
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <div className="h-3 w-0.5 bg-[var(--color-violet)] shadow-[0_0_6px_var(--color-violet)]"></div>
+                              <span className="font-display font-bold text-[var(--color-violet)] text-[8px] uppercase tracking-[0.15em]">RESPONSE</span>
                             </div>
                             {/* Main Body */}
-                            <div className="text-[13px] md:text-sm text-[var(--color-electric-cyan)] font-sans font-light tracking-wide leading-relaxed relative flex items-start group">
-                              <span className="mr-3 mt-1.5 opacity-60">›</span>
-                              <span>{m.content}</span>
-                              {/* Orbiting data points */}
-                              <div className="absolute top-0 right-0 w-full h-full pointer-events-none overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity">
-                                <div className="absolute w-[2px] h-[2px] bg-white rounded-full top-2 left-[10%] animate-[ping_2s_infinite]"></div>
-                                <div className="absolute w-[1px] h-[1px] bg-white rounded-full bottom-2 left-[50%] animate-[ping_3s_infinite]"></div>
-                                <div className="absolute w-[2px] h-[2px] bg-white rounded-full top-[40%] right-[10%] animate-[ping_1.5s_infinite]"></div>
-                              </div>
+                            <div className="text-[13px] md:text-sm text-[var(--color-electric-cyan)] font-sans font-light tracking-wide leading-relaxed relative flex items-start">
+                              <span className="mr-2 mt-0.5 opacity-40">›</span>
+                              <span className="break-words">{m.content}</span>
                             </div>
                           </div>
                         )}
@@ -412,11 +406,11 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
-              className="w-full px-4 md:px-8 pb-4 pt-4 shrink-0 z-20 pointer-events-none"
+              className="w-full px-3 pb-2 pt-2 shrink-0 z-20 pointer-events-none"
             >
               <div className="max-w-4xl mx-auto w-full pointer-events-auto">
-                <div className="relative w-full h-[50px] bg-zinc-900/60 backdrop-blur-xl border-t border-b border-[var(--color-electric-cyan)] shadow-[0_0_15px_rgba(0,243,255,0.15)] flex items-center overflow-hidden">
-                  <span className="absolute left-2 top-1 text-[7px] font-mono font-bold text-[var(--color-electric-cyan)] opacity-70 tracking-widest uppercase">DIRECT INJECTION</span>
+                <div className="relative w-full h-[44px] bg-zinc-900/60 backdrop-blur-xl border border-[var(--color-electric-cyan)]/30 rounded-2xl shadow-[0_0_15px_rgba(0,243,255,0.1)] flex items-center overflow-hidden">
+                  <span className="absolute left-3 top-0.5 text-[6px] font-mono font-bold text-[var(--color-electric-cyan)] opacity-50 tracking-widest uppercase">DIRECT INJECTION</span>
                   
                   {(inputValue.length > 0 || isTyping) && (
                     <div className="absolute left-[50%] -translate-x-[50%] bottom-[50%] w-0 h-0 pointer-events-none z-0">
@@ -427,11 +421,11 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="flex-1 flex items-center px-4 pt-3 relative z-10 w-full">
-                    <span className="text-[var(--color-electric-cyan)] mr-3 opacity-60 font-mono font-bold">{">"}</span>
+                  <div className="flex-1 flex items-center px-3 pt-2.5 relative z-10 w-full">
+                    <span className="text-[var(--color-electric-cyan)] mr-2 opacity-50 font-mono font-bold text-sm">{">"}</span>
                     <input 
                       className="command-line-input text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] tracking-tight"
-                      placeholder="Execute command protocol..."
+                      placeholder="Type a message..."
                       value={inputValue}
                       onChange={(e) => setInputValue(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSend()}
@@ -441,9 +435,9 @@ export default function App() {
                   <button 
                     onClick={handleSend}
                     disabled={!inputValue.trim()}
-                    className="px-4 h-full flex items-center justify-center transition-all bg-[var(--color-electric-cyan)]/10 hover:bg-[var(--color-electric-cyan)]/20 border-l border-[var(--color-electric-cyan)]/50 text-[var(--color-brushed-gold)] disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed group z-10"
+                    className="px-3 h-full flex items-center justify-center transition-all bg-[var(--color-electric-cyan)]/10 hover:bg-[var(--color-electric-cyan)]/20 rounded-r-2xl text-[var(--color-brushed-gold)] disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed group z-10"
                   >
-                    <Anchor className="w-5 h-5 group-hover:scale-110 drop-shadow-[0_0_8px_var(--color-brushed-gold)] transition-transform" />
+                    <Anchor className="w-4 h-4 group-hover:scale-110 drop-shadow-[0_0_6px_var(--color-brushed-gold)] transition-transform" />
                   </button>
                 </div>
               </div>
@@ -452,37 +446,37 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Persistent Bottom Tab Bar */}
-      <nav className="h-16 glass-nav flex items-center justify-around px-2 z-40 shrink-0 safe-area-bottom pb-2 backdrop-blur-2xl">
+      {/* Compact Bottom Tab Bar - mobile optimized */}
+      <nav className="h-14 glass-nav flex items-center justify-around px-1 z-40 shrink-0 safe-area-bottom backdrop-blur-2xl">
         <TabButton 
-          icon={<MessageSquare className="w-5 h-5 mx-auto mb-1.5" />} 
+          icon={<MessageSquare className="w-[18px] h-[18px]" />} 
           active={activeTab === 'chat'} 
           onClick={() => setActiveTab('chat')}
-          label="Synapse Interlink"
+          label="Chat"
         />
         <TabButton 
-          icon={<Terminal className="w-5 h-5 mx-auto mb-1.5" />} 
+          icon={<Terminal className="w-[18px] h-[18px]" />} 
           active={activeTab === 'skills'} 
           onClick={() => setActiveTab('skills')}
-          label="Protocols"
+          label="Skills"
         />
         <TabButton 
-          icon={<Cpu className="w-5 h-5 mx-auto mb-1.5" />} 
+          icon={<Cpu className="w-[18px] h-[18px]" />} 
           active={activeTab === 'brain'} 
           onClick={() => setActiveTab('brain')}
-          label="Metrics"
+          label="Brain"
         />
         <TabButton 
-          icon={<Orbit className="w-5 h-5 mx-auto mb-1.5" />} 
+          icon={<Orbit className="w-[18px] h-[18px]" />} 
           active={activeTab === 'graph'} 
           onClick={() => setActiveTab('graph')}
-          label="Network"
+          label="Graph"
         />
         <TabButton 
-          icon={<Settings className="w-5 h-5 mx-auto mb-1.5" />} 
+          icon={<Settings className="w-[18px] h-[18px]" />} 
           active={activeTab === 'settings'} 
           onClick={() => setActiveTab('settings')}
-          label="Interface"
+          label="Settings"
         />
       </nav>
     </div>
@@ -495,23 +489,23 @@ function TabButton({ icon, active, onClick, label }: { icon: React.ReactNode, ac
     <button 
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-300 relative min-w-[70px]",
+        "flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all duration-300 relative min-w-[56px]",
         active 
-          ? "bg-white/10 shadow-[0_4px_15px_rgba(255,191,0,0.1),_inset_0_1px_rgba(255,255,255,0.2)] border border-white/20 tab-active" 
-          : "glass-button text-zinc-300 hover:text-zinc-300"
+          ? "bg-white/10 shadow-[0_2px_10px_rgba(0,243,255,0.1),_inset_0_1px_rgba(255,255,255,0.2)] border border-white/15" 
+          : "text-zinc-400 active:text-zinc-200"
       )}
     >
       <div className={cn(
         "transition-transform duration-300",
-        active ? "scale-110 drop-shadow-[0_0_8px_var(--color-amber)]" : "scale-100"
+        active ? "scale-110 drop-shadow-[0_0_6px_var(--color-electric-cyan)] text-[var(--color-electric-cyan)]" : "scale-100"
       )}>
         {icon}
       </div>
-      <span className="text-[7.5px] font-mono font-bold uppercase tracking-[0.1em] text-center max-w-[65px] leading-tight">{label}</span>
+      <span className="text-[7px] font-mono font-bold uppercase tracking-[0.08em] text-center max-w-[56px] leading-tight mt-0.5">{label}</span>
       {active && (
         <motion.div 
           layoutId="activeIndicator"
-          className="absolute -bottom-[6px] w-[50%] h-[2px] bg-[var(--color-amber)] shadow-[0_0_8px_var(--color-amber)] rounded-full"
+          className="absolute -bottom-0.5 w-[40%] h-[2px] bg-[var(--color-electric-cyan)] shadow-[0_0_6px_var(--color-electric-cyan)] rounded-full"
         />
       )}
     </button>
