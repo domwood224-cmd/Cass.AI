@@ -30,8 +30,12 @@ import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer'
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>(() => {
-    const saved = localStorage.getItem('cassidey_messages');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('cassidey_messages');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
   const [inputValue, setInputValue] = useState('');
 
