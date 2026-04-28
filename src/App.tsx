@@ -45,7 +45,7 @@ const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphV
 function GraphLoadingFallback() {
   return (
     <div className="w-full h-full flex flex-col items-center justify-center text-zinc-300">
-      <Orbit className="w-12 h-12 mb-4 opacity-30 text-indigo-300 animate-[spin_8s_linear_infinite]" />
+      <Orbit className="w-12 h-12 mb-4 opacity-30 text-indigo-300 animate-[spin_20s_linear_infinite]" />
       <span className="text-[10px] font-medium tracking-[0.2em] uppercase text-zinc-300">Initializing Neural Lattice...</span>
     </div>
   );
@@ -243,7 +243,7 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-1.5 bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl px-2.5 py-1 rounded-full border border-white/10">
-           <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+           <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-[pulse_4s_ease-in-out_infinite] shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
            <span className="text-[8px] font-medium text-zinc-300 uppercase tracking-widest">AI Active</span>
         </div>
       </header>
@@ -302,13 +302,13 @@ export default function App() {
                     <div className="flex flex-col items-start gap-2 relative z-10">
                       <div className="flex flex-col items-start gap-1 relative z-10">
                         <div className="flex items-center gap-2 mb-1">
-                          <div className="h-4 w-1 bg-[var(--color-violet)] opacity-50 animate-pulse"></div>
-                          <span className="font-display font-medium text-[var(--color-violet)] text-[10px] uppercase tracking-[0.2em] opacity-50 animate-pulse">PROCESSING THROUGH AI ENGINE...</span>
+                          <div className="h-4 w-1 bg-[var(--color-violet)] opacity-50 animate-[pulse_3s_ease-in-out_infinite]"></div>
+                          <span className="font-display font-medium text-[var(--color-violet)] text-[10px] uppercase tracking-[0.2em] opacity-50 animate-[pulse_3s_ease-in-out_infinite]">PROCESSING THROUGH AI ENGINE...</span>
                         </div>
                         {webStatus && (
                           <div className="flex items-center gap-1.5 ml-6">
-                            <Globe className="w-3 h-3 text-cyan-400/60 animate-pulse" />
-                            <span className="text-[8px] font-mono text-cyan-400/60 uppercase tracking-widest animate-pulse">{webStatus}</span>
+                            <Globe className="w-3 h-3 text-cyan-400/60 animate-[pulse_3s_ease-in-out_infinite]" />
+                            <span className="text-[8px] font-mono text-cyan-400/60 uppercase tracking-widest animate-[pulse_3s_ease-in-out_infinite]">{webStatus}</span>
                           </div>
                         )}
                       </div>
@@ -529,13 +529,6 @@ export default function App() {
               <div className="max-w-4xl mx-auto w-full pointer-events-auto">
                 <div className="relative w-full h-[44px] bg-zinc-900/60 backdrop-blur-xl border border-[var(--color-electric-cyan)]/30 rounded-2xl shadow-[0_0_15px_rgba(0,243,255,0.1)] flex items-center overflow-hidden">
                   <span className="absolute left-3 top-0.5 text-[6px] font-mono font-bold text-[var(--color-electric-cyan)] opacity-50 tracking-widest uppercase">AI ENGINE INPUT</span>
-                  {(inputValue.length > 0 || isTyping) && (
-                    <div className="absolute left-[50%] -translate-x-[50%] bottom-[50%] w-0 h-0 pointer-events-none z-0">
-                      <div className="absolute left-0 bottom-0 w-[2px] h-[10px] bg-[var(--color-violet)] rounded-full animate-[ping_0.5s_infinite] opacity-80 shadow-[0_0_10px_var(--color-violet)]"></div>
-                      <div className="absolute left-[-10px] bottom-[-5px] w-[1px] h-[5px] bg-[var(--color-electric-cyan)] rounded-full animate-[ping_0.7s_infinite_0.2s] opacity-80 shadow-[0_0_5px_var(--color-electric-cyan)]"></div>
-                      <div className="absolute left-[10px] bottom-[-2px] w-[2px] h-[8px] bg-[var(--color-violet)] rounded-full animate-[ping_0.6s_infinite_0.4s] opacity-60 shadow-[0_0_8px_var(--color-violet)]"></div>
-                    </div>
-                  )}
                   <div className="flex-1 flex items-center px-3 pt-2.5 relative z-10 w-full">
                     <span className="text-[var(--color-electric-cyan)] mr-2 opacity-50 font-mono font-bold text-sm">{">"}</span>
                     <input className="command-line-input text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] tracking-tight"

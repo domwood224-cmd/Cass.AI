@@ -9,8 +9,8 @@
   --color-electric-cyan: #00f3ff;
   --color-violet: #8a2be2;
   --color-violet-dim: rgba(138, 43, 226, 0.5);
-  --color-brushed-gold: #39ff14; /* replaced yellow with neon green */
-  --color-amber: #00ff66; /* replaced amber with neon green */
+  --color-brushed-gold: #39ff14;
+  --color-amber: #00ff66;
   --color-glitch-red: #ff003c;
   --color-system-bg: #050505;
 }
@@ -20,7 +20,6 @@
     @apply bg-[var(--color-system-bg)] text-zinc-100 font-sans antialiased overflow-hidden;
   }
 
-  /* Safe area insets for notched phones */
   .safe-area-top {
     padding-top: env(safe-area-inset-top, 0px);
   }
@@ -28,7 +27,6 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
-  /* Prevent text selection on UI elements */
   button, nav, header {
     -webkit-user-select: none;
     user-select: none;
@@ -44,7 +42,7 @@
 }
 
 .command-line-input::placeholder {
-  color: rgba(57, 255, 20, 0.4); /* Neon green placeholder */
+  color: rgba(57, 255, 20, 0.4);
   font-family: var(--font-mono);
 }
 
@@ -56,68 +54,61 @@
   @apply bg-white/10 backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors shadow-[0_0_15px_rgba(255,255,255,0.1)_inset];
 }
 
-/* Animations */
+/* ─── Slowed-down animations ─── */
+
+/* User messages: single subtle glow, no loop */
 @keyframes light-trail {
   0% {
-    text-shadow: 0 0 4px var(--color-brushed-gold), 0 0 10px var(--color-brushed-gold), 0 0 20px rgba(57,255,20,0.5);
-    filter: brightness(1.5);
+    text-shadow: 0 0 4px var(--color-brushed-gold), 0 0 10px var(--color-brushed-gold);
+    filter: brightness(1.3);
   }
   100% {
-    text-shadow: 0 0 2px rgba(57,255,20,0.8), 0 0 4px rgba(57,255,20,0.4);
+    text-shadow: 0 0 2px rgba(57,255,20,0.6);
     filter: brightness(1);
   }
 }
 
 .text-trail {
-  animation: light-trail 2s ease-out forwards;
+  animation: light-trail 3s ease-out forwards;
 }
 
+/* Memory-weighted messages: very slow gentle pulse */
 @keyframes violet-halo {
   0%, 100% {
-    text-shadow: 0 0 4px var(--color-violet), 0 0 10px var(--color-violet), 0 0 15px var(--color-violet);
+    text-shadow: 0 0 4px var(--color-violet);
   }
   50% {
-    text-shadow: 0 0 8px var(--color-violet), 0 0 15px var(--color-violet), 0 0 25px var(--color-electric-cyan);
+    text-shadow: 0 0 8px var(--color-violet), 0 0 15px var(--color-violet);
   }
 }
 
 .memory-weighted {
-  animation: violet-halo 3s infinite ease-in-out;
-  color: white; /* Make the text center white while it glows violet */
+  animation: violet-halo 8s infinite ease-in-out;
+  color: white;
 }
 
+/* Glitch: much slower, less frequent */
 @keyframes glitch-skew {
   0% { transform: skew(0deg); }
-  20% { transform: skew(-5deg); }
-  22% { transform: skew(5deg); }
+  20% { transform: skew(-3deg); }
+  22% { transform: skew(3deg); }
   24% { transform: skew(0deg); }
-  50% { transform: skew(0deg); }
-  52% { transform: skew(10deg); }
-  54% { transform: skew(-10deg); }
-  56% { transform: skew(0deg); }
   100% { transform: skew(0deg); }
 }
 
 @keyframes glitch-lines {
   0%, 100% {
     opacity: 0;
-    transform: translateX(0);
-  }
-  10%, 90% {
-    opacity: 0;
   }
   49% {
     opacity: 0;
-    transform: translateX(-10px);
   }
   50% {
     opacity: 1;
-    transform: translateX(10px) scaleY(0.5);
     background-color: var(--color-glitch-red);
   }
   51% {
     opacity: 0;
-    transform: translateX(-5px);
   }
 }
 
@@ -135,22 +126,22 @@
   background-color: var(--color-glitch-red);
   opacity: 0;
   z-index: 50;
-  animation: glitch-lines 4.2s infinite linear;
+  animation: glitch-lines 12s infinite linear;
   pointer-events: none;
+  will-change: opacity;
 }
 
 .glitch-container.active-glitch {
   animation: glitch-skew 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 
+/* Nerve line: very slow subtle pulse */
 @keyframes nerve-pulse {
   0%, 100% {
-    opacity: 0.3;
-    box-shadow: 0 0 5px var(--color-electric-cyan);
+    opacity: 0.2;
   }
   50% {
-    opacity: 0.8;
-    box-shadow: 0 0 15px var(--color-electric-cyan), 0 0 25px var(--color-violet);
+    opacity: 0.5;
   }
 }
 
@@ -162,24 +153,34 @@
   bottom: 0;
   width: 1px;
   background: linear-gradient(to bottom, transparent, var(--color-electric-cyan), transparent);
-  animation: nerve-pulse 4s infinite ease-in-out;
+  animation: nerve-pulse 10s infinite ease-in-out;
   pointer-events: none;
   z-index: 0;
+  will-change: opacity;
 }
 
+/* Active tab: slow gentle glow */
 @keyframes amber-pulse {
   0%, 100% {
     color: var(--color-amber);
     text-shadow: 0 0 4px var(--color-amber);
   }
   50% {
-    color: #fff;
-    text-shadow: 0 0 10px var(--color-amber), 0 0 20px var(--color-amber);
+    text-shadow: 0 0 8px var(--color-amber);
   }
 }
 
 .tab-active {
-  animation: amber-pulse 2s infinite ease-in-out;
+  animation: amber-pulse 6s infinite ease-in-out;
+}
+
+/* Reduce motion for accessibility and performance */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Custom scrollbar to hide standard track */

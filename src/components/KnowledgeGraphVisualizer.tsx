@@ -109,7 +109,7 @@ export function KnowledgeGraphVisualizer({ data, className, isLearning }: { data
       <div className={cn("w-full h-full flex flex-col items-center justify-center text-zinc-300 relative", className || "h-[400px]")}>
         <div className="relative">
           <div className="absolute inset-0 bg-indigo-500/10 blur-3xl rounded-full scale-150"></div>
-          <Orbit className="w-16 h-16 mb-6 opacity-30 text-indigo-300 relative z-10 animate-[spin_12s_linear_infinite]" />
+          <Orbit className="w-16 h-16 mb-6 opacity-30 text-indigo-300 relative z-10 animate-[spin_20s_linear_infinite]" />
         </div>
         <span className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300">NEURAL LATTICE EMPTY</span>
         <span className="text-[10px] mt-3 text-zinc-300 tracking-widest uppercase font-light">Awaiting spatial input...</span>
@@ -221,7 +221,7 @@ export function KnowledgeGraphVisualizer({ data, className, isLearning }: { data
           <div className="absolute -inset-0.5 bg-gradient-to-br from-indigo-500/20 via-purple-500/10 to-zinc-400/10 rounded-[2.5rem] blur-xl opacity-80 -z-10"></div>
           <div className="flex items-start justify-between mb-5">
             <h4 className="text-lg font-light tracking-wide text-zinc-100 capitalize flex items-center gap-3">
-              <Orbit className="w-5 h-5 text-indigo-400 animate-[spin_8s_linear_infinite]" />
+              <Orbit className="w-5 h-5 text-indigo-400 animate-[spin_20s_linear_infinite]" />
               {selectedNode.label}
             </h4>
             <button 
