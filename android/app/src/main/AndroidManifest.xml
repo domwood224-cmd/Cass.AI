@@ -28,7 +28,6 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
-            android:fitsSystemWindows="true"
             android:theme="@style/CassideyTheme.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
