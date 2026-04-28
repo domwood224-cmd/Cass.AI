@@ -128,7 +128,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div className="flex flex-col bg-[var(--color-system-bg)] overflow-hidden font-sans relative" style={{ height: 'var(--app-h, 100vh)' }}>
+    <div className="flex flex-col bg-[var(--color-system-bg)] overflow-hidden font-sans relative" style={{ height: window.innerHeight + 'px' }}>
       <div className="nerve-line"></div>
       
       {/* Corner Micro-text Warnings - hidden on small screens */}
@@ -163,8 +163,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col">
+      {/* Main Content Area - padding bottom for fixed tab bar */}
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col pb-14">
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
             {activeTab === 'chat' && (
@@ -467,8 +467,8 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Compact Bottom Tab Bar - mobile optimized */}
-      <nav className="h-14 glass-nav flex items-center justify-around px-1 z-40 shrink-0 backdrop-blur-2xl">
+      {/* Compact Bottom Tab Bar - pinned to very bottom of screen */}
+      <nav className="absolute bottom-0 left-0 right-0 h-14 glass-nav flex items-center justify-around px-1 z-40 backdrop-blur-2xl">
         <TabButton 
           icon={<MessageSquare className="w-[18px] h-[18px]" />} 
           active={activeTab === 'chat'} 
