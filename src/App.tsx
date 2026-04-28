@@ -128,7 +128,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div className="flex flex-col h-screen bg-[var(--color-system-bg)] overflow-hidden font-sans relative">
+    <div className="flex flex-col bg-[var(--color-system-bg)] overflow-hidden font-sans relative" style={{ height: 'var(--app-h, 100vh)' }}>
       <div className="nerve-line"></div>
       
       {/* Corner Micro-text Warnings - hidden on small screens */}
