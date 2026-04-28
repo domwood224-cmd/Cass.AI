@@ -25,6 +25,7 @@ import { chatWithCassidey } from './lib/gemini';
 import { cn } from './lib/utils';
 import { Skill, SkillCategory, LearningState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 
 // Lazy-load the heavy 3D graph component (three.js + force-graph-3d = ~2MB)
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
@@ -41,23 +42,42 @@ function GraphLoadingFallback() {
 export default function App() {
   // Catch-all error boundary for the entire app
   const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
-  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>(() => {
-    try {
-      const saved = localStorage.getItem('cassidey_messages');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Start empty — SD card data loads async after mount
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
   const [inputValue, setInputValue] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('cassidey_messages', JSON.stringify(messages));
-  }, [messages]);
   const [isTyping, setIsTyping] = useState(false);
   const [stats, setStats] = useState<LearningState>(learningEngine.getStats());
   const [skills, setSkills] = useState<Skill[]>(skillManager.getAllSkills());
+  const [ready, setReady] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // ── One-time init: migrate localStorage → SD card, then load from SD card ──
+  useEffect(() => {
+    (async () => {
+      await migrateFromLocalStorage();
+
+      // Load messages from SD card (or localStorage fallback on web)
+      const savedMsgs = await readJson<{ role: string; content: string }[]>(STORAGE_KEYS.MESSAGES, []);
+      if (savedMsgs.length > 0) setMessages(savedMsgs);
+
+      // Reload engine data from SD card
+      await learningEngine.loadLocalProgress();
+      setStats(learningEngine.getStats());
+
+      // Reload skills from SD card
+      await skillManager.loadLocalProgress();
+      setSkills(skillManager.getAllSkills());
+
+      setReady(true);
+    })();
+  }, []);
+
+  // ── Persist messages to SD card on every change ──
+  useEffect(() => {
+    if (messages.length > 0 || ready) {
+      writeJson(STORAGE_KEYS.MESSAGES, messages).catch(console.error);
+    }
+  }, [messages, ready]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -97,8 +117,8 @@ export default function App() {
     const relevantSkills = skills.filter(s => s.category.toString().includes(type.split('_')[0]) || Math.random() > 0.8);
     relevantSkills.forEach(s => skillManager.addXp(s.id, Math.floor(improvement * 500)));
     
-    skillManager.saveLocalProgress();
-    learningEngine.saveLocalProgress();
+    await skillManager.saveLocalProgress();
+    await learningEngine.saveLocalProgress();
     
     setMessages(prev => [...prev, { role: 'assistant', content: aiResponse }]);
     setStats(learningEngine.getStats());
@@ -379,9 +399,10 @@ export default function App() {
                       </p>
                       
                       <button
-                        onClick={() => {
-                          learningEngine.reset();
-                          skillManager.reset();
+                        onClick={async () => {
+                          await learningEngine.reset();
+                          await skillManager.reset();
+                          await purgeAll();
                           setStats(learningEngine.getStats());
                           setSkills(skillManager.getAllSkills());
                           setMessages([]);

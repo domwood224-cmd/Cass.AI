@@ -1,4 +1,5 @@
 import { Skill, SkillCategory } from '../types';
+import { readJson, writeJson, removeJson, STORAGE_KEYS } from './storage';
 
 export class SkillTreeManager {
   private skillTree: Map<string, Skill> = new Map();
@@ -39,21 +40,21 @@ export class SkillTreeManager {
     }
   }
 
-  public reset() {
+  public async reset() {
     this.skillTree.forEach(skill => {
       skill.level = 0;
       skill.xp = 0;
     });
     this.unlockedSkillIds.clear();
-    localStorage.removeItem('cassidey_skill_progress');
+    await removeJson(STORAGE_KEYS.SKILLS);
   }
 
-  public saveLocalProgress() {
-    localStorage.setItem('cassidey_skill_progress', this.exportProgress());
+  public async saveLocalProgress() {
+    await writeJson(STORAGE_KEYS.SKILLS, this.exportProgress());
   }
 
-  public loadLocalProgress() {
-    const data = localStorage.getItem('cassidey_skill_progress');
+  public async loadLocalProgress() {
+    const data = await readJson<string>(STORAGE_KEYS.SKILLS, '');
     if (data) {
       this.importProgress(data);
     }

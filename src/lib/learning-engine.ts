@@ -1,4 +1,5 @@
 import { KnowledgeNode, KnowledgeEdge, LearningType, LearningState, WordData } from '../types';
+import { readJson, writeJson, removeJson, STORAGE_KEYS } from './storage';
 
 export class AdvancedLearningEngine {
   private nodes: Map<string, KnowledgeNode> = new Map();
@@ -13,7 +14,7 @@ export class AdvancedLearningEngine {
     this.loadLocalProgress();
   }
 
-  public saveLocalProgress() {
+  public async saveLocalProgress() {
     const data = {
       nodes: Array.from(this.nodes.entries()),
       edges: this.edges,
@@ -22,14 +23,13 @@ export class AdvancedLearningEngine {
       vocabulary: Array.from(this.vocabulary.entries()),
       conversationContext: this.conversationContext
     };
-    localStorage.setItem('cassidey_learning_progress', JSON.stringify(data));
+    await writeJson(STORAGE_KEYS.LEARNING, data);
   }
 
-  public loadLocalProgress() {
-    const json = localStorage.getItem('cassidey_learning_progress');
-    if (json) {
+  public async loadLocalProgress() {
+    const data = await readJson<any>(STORAGE_KEYS.LEARNING, null);
+    if (data) {
       try {
-        const data = JSON.parse(json);
         if (data.nodes) this.nodes = new Map(data.nodes);
         if (data.edges) this.edges = data.edges;
         if (data.conceptMastery) this.conceptMastery = data.conceptMastery;
@@ -55,7 +55,7 @@ export class AdvancedLearningEngine {
     }
   }
 
-  public reset() {
+  public async reset() {
     this.nodes.clear();
     this.edges = [];
     this.conceptMastery = {};
@@ -63,7 +63,7 @@ export class AdvancedLearningEngine {
     this.vocabulary.clear();
     this.conversationContext = [];
     this.initializeMastery();
-    localStorage.removeItem('cassidey_learning_progress');
+    await removeJson(STORAGE_KEYS.LEARNING);
   }
 
   private initializeMastery() {
