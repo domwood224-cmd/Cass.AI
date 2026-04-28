@@ -8,3 +8,13 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Global error handler for uncaught errors in WebView
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Global error:', message, source, lineno, colno, error);
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+});

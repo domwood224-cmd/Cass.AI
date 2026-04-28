@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import * as d3 from 'd3';
 import { 
   Brain, 
   Code, 
@@ -25,9 +24,22 @@ import { learningEngine } from './lib/learning-engine';
 import { chatWithCassidey } from './lib/gemini';
 import { cn } from './lib/utils';
 import { Skill, SkillCategory, LearningState, LearningType } from './types';
-import { KnowledgeGraphVisualizer } from './components/KnowledgeGraphVisualizer';
+import { ErrorBoundary } from './components/ErrorBoundary';
+
+// Lazy-load the heavy 3D graph component (three.js + force-graph-3d = ~2MB)
+const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
+
+function GraphLoadingFallback() {
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center text-zinc-300">
+      <Orbit className="w-12 h-12 mb-4 opacity-30 text-indigo-300 animate-[spin_8s_linear_infinite]" />
+      <span className="text-[10px] font-medium tracking-[0.2em] uppercase text-zinc-300">Initializing Neural Lattice...</span>
+    </div>
+  );
+}
 
 export default function App() {
+  // Catch-all error boundary for the entire app
   const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>(() => {
     try {
@@ -95,6 +107,7 @@ export default function App() {
   };
 
   return (
+    <ErrorBoundary>
     <div className="flex flex-col h-[100dvh] bg-[var(--color-system-bg)] overflow-hidden font-sans relative">
       <div className="nerve-line"></div>
       
@@ -328,7 +341,11 @@ export default function App() {
                   <p className="text-zinc-300 text-[11px] uppercase tracking-[0.1em] font-light mt-1 drop-shadow-md">Interactive Spatial Topography</p>
                 </div>
                 <div className="w-full h-full pt-20">
-                  <KnowledgeGraphVisualizer data={learningEngine.getGraphData()} className="h-full rounded-none border-0" isLearning={isTyping} />
+                  <ErrorBoundary fallback={<GraphLoadingFallback />}>
+                    <Suspense fallback={<GraphLoadingFallback />}>
+                      <KnowledgeGraphVisualizer data={learningEngine.getGraphData()} className="h-full rounded-none border-0" isLearning={isTyping} />
+                    </Suspense>
+                  </ErrorBoundary>
                 </div>
               </motion.div>
             )}
@@ -469,6 +486,7 @@ export default function App() {
         />
       </nav>
     </div>
+    </ErrorBoundary>
   );
 }
 
