@@ -19,11 +19,14 @@ concurrency:
   group: apk-build
   cancel-in-progress: false
 
+timeout-minutes: 30
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
