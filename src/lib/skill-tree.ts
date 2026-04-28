@@ -38,7 +38,34 @@ export class SkillTreeManager {
 
   constructor() {
     this.buildSkillTree();
+    this.preloadConversationSkills();
     this.loadLocalProgress();
+  }
+
+  // ─── PRELOAD: Advanced Conversation Skills ───
+  // All 10 Communication & Empathy branch skills pre-loaded at max level
+  private preloadConversationSkills() {
+    const conversationSkillIds = [
+      'communication_core',        // COMMON
+      'emotional_intelligence',    // COMMON
+      'context_awareness',         // UNCOMMON
+      'sarcasm_engine',            // UNCOMMON
+      'creative_writing',          // RARE
+      'debate_logic',              // RARE
+      'linguistic_mastery',        // EPIC
+      'empathy_synthesis',         // EPIC
+      'universal_empathy',         // LEGENDARY
+      'neurolinguistic_bridge',    // MYTHIC
+    ];
+    // Level 50 with XP = 50 * 50^2.2 ≈ 238,000
+    // This satisfies all prerequisite chain requirements up to MYTHIC tier
+    for (const id of conversationSkillIds) {
+      const skill = this.skillTree.get(id);
+      if (skill) {
+        skill.level = 50;
+        skill.xp = 50 * Math.pow(50, 2.2);
+      }
+    }
   }
 
   public exportProgress(): string {
