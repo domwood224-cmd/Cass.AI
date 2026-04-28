@@ -110,6 +110,8 @@ jobs:
           else
             TAG="${{ steps.version.outputs.version }}"
           fi
+          # Delete existing release if it exists (for manual rebuilds)
+          gh release delete "${TAG}" --repo "${{ github.repository }}" --yes 2>/dev/null || true
           gh release create "${TAG}" "${APK_PATH}" \
             --title "Cassidey ${{ steps.version.outputs.version }}" \
             --notes "Automated build from GitHub Actions" \
