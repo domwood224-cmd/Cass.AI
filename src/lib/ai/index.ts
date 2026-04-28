@@ -6,4 +6,6 @@ export { NeuralKnowledgeGraph } from './neural-knowledge-graph';
 export { TransferLearningManager } from './transfer-learning-manager';
 export { WebLearner } from './web-learner';
 export { TrainingHelper } from './training-helper';
+export { AutonomousStudyAgent, StudyDepth } from './autonomous-study-agent';
+export type { StudyTopic, StudyAgentStats } from './autonomous-study-agent';
 export * from './types';

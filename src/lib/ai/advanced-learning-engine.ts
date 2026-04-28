@@ -16,6 +16,7 @@ import { NeuralKnowledgeGraph } from './neural-knowledge-graph';
 import { TransferLearningManager } from './transfer-learning-manager';
 import { WebLearner, WebSearchResult } from './web-learner';
 import { TrainingHelper } from './training-helper';
+import { AutonomousStudyAgent, StudyDepth, StudyTopic } from './autonomous-study-agent';
 import { readJson, writeJson, STORAGE_KEYS } from '../storage';
 
 const BASE_LEARNING_RATE = 0.001;
@@ -42,6 +43,9 @@ export class AdvancedLearningEngine {
   // v2.0 — Web Learning & Training
   private webLearner: WebLearner;
   private trainingHelper: TrainingHelper;
+
+  // v3.0 — Autonomous Study Agent
+  private studyAgent: AutonomousStudyAgent;
 
   // Learning state
   private conceptMastery: Record<string, number> = {};
@@ -71,10 +75,12 @@ export class AdvancedLearningEngine {
     this.transferLearningManager = new TransferLearningManager();
     this.webLearner = new WebLearner();
     this.trainingHelper = new TrainingHelper();
+    this.studyAgent = new AutonomousStudyAgent(this.webLearner);
     this.startTime = Date.now();
 
     // Connect web learner to knowledge graph
     this.webLearner.setKnowledgeGraph(this.knowledgeGraph);
+    this.studyAgent.setKnowledgeGraph(this.knowledgeGraph);
 
     // Initialize default concepts
     const defaults: string[] = ['greetings', 'questions', 'commands', 'conversations',
@@ -528,6 +534,7 @@ export class AdvancedLearningEngine {
   getActiveLearning() { return this.activeLearningSystem; }
   getTransferLearning() { return this.transferLearningManager; }
   getWebLearner() { return this.webLearner; }
+  getStudyAgent() { return this.studyAgent; }
   getTrainingHelper() { return this.trainingHelper; }
 
   setLearningRate(rate: number): void {
@@ -564,6 +571,7 @@ export class AdvancedLearningEngine {
         conversationContext: this.conversationContext,
         knowledgeGraph: this.knowledgeGraph.exportData(),
         webLearnedTopics: this.webLearner.exportLearnedTopics(),
+        studyAgentState: this.studyAgent.exportState(),
         transferSuccessRate: this.transferLearningManager.getTransferSuccessRate(),
         averageTransferBenefit: this.transferLearningManager.getAverageTransferBenefit(),
         savedAt: Date.now(),
@@ -614,6 +622,11 @@ export class AdvancedLearningEngine {
         this.webLearner.importLearnedTopics(data.webLearnedTopics);
       }
 
+      // Restore study agent state
+      if (data.studyAgentState) {
+        this.studyAgent.importState(data.studyAgentState);
+      }
+
       console.log(`[AIEngine] Loaded from SD card (iter ${this.totalLearningIterations}, ${this.knowledgeGraph.getTotalNodes()} KG nodes, ${this.webLearner.getLearnedTopicCount()} web topics)`);
     } catch (e) {
       console.error('[AIEngine] Failed to load progress:', e);
@@ -622,6 +635,7 @@ export class AdvancedLearningEngine {
 
   shutdown(): void {
     this.isLearning = false;
+    this.studyAgent.stop();
     if (this.batchInterval) clearInterval(this.batchInterval);
     if (this.optimizationInterval) clearInterval(this.optimizationInterval);
   }

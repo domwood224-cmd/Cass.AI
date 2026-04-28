@@ -50,11 +50,20 @@ import {
   Sliders,
   RotateCcw,
   Download,
+  BookOpen,
+  GraduationCap,
+  Play,
+  Pause,
+  Square,
+  Plus,
+  Trash2,
   type LucideIcon
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
 import { aiEngine } from './lib/ai';
 import { AttentionMode } from './lib/ai';
+import { StudyDepth } from './lib/ai';
+import type { StudyTopic, StudyAgentStats } from './lib/ai';
 import { WebLearner } from './lib/ai/web-learner';
 import { Globe, Search } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -154,6 +163,15 @@ export default function App() {
   const [attnLayers, setAttnLayers] = useState(4);
   const [attnTemperature, setAttnTemperature] = useState(1.0);
 
+  // Study agent states
+  const [studyTopics, setStudyTopics] = useState<StudyTopic[]>([]);
+  const [studyStats, setStudyStats] = useState<StudyAgentStats | null>(null);
+  const [studyStatusMsg, setStudyStatusMsg] = useState('');
+  const [studyRunning, setStudyRunning] = useState(false);
+  const [newStudyTopic, setNewStudyTopic] = useState('');
+  const [studyDepth, setStudyDepth] = useState<StudyDepth>(StudyDepth.MODERATE);
+  const [studyInterval, setStudyInterval] = useState(60);
+
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
       const n = (window as any).__CASSIDEY_NATIVE__;
@@ -187,6 +205,13 @@ export default function App() {
       setAttnHeads(tConfig.numHeads);
       setAttnLayers(tConfig.numLayers);
       setAttnTemperature(tConfig.temperature);
+      // Load study agent state
+      const agent = aiEngine.getStudyAgent();
+      setStudyTopics(agent.getTopics());
+      setStudyStats(agent.getStats());
+      agent.setOnStatusChange((msg: string) => setStudyStatusMsg(msg));
+      agent.setOnTopicUpdate(() => setStudyTopics(agent.getTopics()));
+      setStudyRunning(agent.getStats().isRunning);
       setReady(true);
     })();
   }, []);
@@ -210,6 +235,10 @@ export default function App() {
     const interval = setInterval(() => {
       setAiStats(aiEngine.getStats());
       setSkills(skillManager.getAllSkills());
+      const agent = aiEngine.getStudyAgent();
+      setStudyStats(agent.getStats());
+      setStudyTopics(agent.getTopics());
+      setStudyRunning(agent.getStats().isRunning);
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -261,6 +290,41 @@ export default function App() {
     setAiStats(aiEngine.getStats());
   }, []);
 
+  // ─── Study Agent Controls ───
+  const handleAddStudyTopic = useCallback(() => {
+    if (!newStudyTopic.trim()) return;
+    const agent = aiEngine.getStudyAgent();
+    agent.addTopic(newStudyTopic.trim(), studyDepth);
+    setStudyTopics(agent.getTopics());
+    setNewStudyTopic('');
+    if (!agent.getStats().isRunning) { agent.start(); setStudyRunning(true); }
+  }, [newStudyTopic, studyDepth]);
+
+  const handleRemoveStudyTopic = useCallback((id: string) => {
+    const agent = aiEngine.getStudyAgent();
+    agent.removeTopic(id);
+    setStudyTopics(agent.getTopics());
+    setStudyStats(agent.getStats());
+  }, []);
+
+  const handleToggleStudyAgent = useCallback(() => {
+    const agent = aiEngine.getStudyAgent();
+    if (agent.getStats().isRunning) { agent.stop(); setStudyRunning(false); }
+    else { agent.start(); setStudyRunning(true); }
+  }, []);
+
+  const handleStudyDepthChange = useCallback((topicId: string, depth: StudyDepth) => {
+    const agent = aiEngine.getStudyAgent();
+    agent.setTopicDepth(topicId, depth);
+    setStudyTopics(agent.getTopics());
+  }, []);
+
+  const handleStudyIntervalChange = useCallback((seconds: number) => {
+    const agent = aiEngine.getStudyAgent();
+    agent.setInterval(seconds * 1000);
+    setStudyInterval(seconds);
+  }, []);
+
   const handleCopy = useCallback((text: string, idx: number) => {
     navigator.clipboard.writeText(text).catch(() => {});
     setCopiedIdx(idx);
@@ -300,6 +364,69 @@ export default function App() {
     setWebStatus('');
     setBloomActive(true);
     setTimeout(() => setBloomActive(false), 1500);
+
+    // ─── Study Command Detection ───
+    const lower = userMsg.toLowerCase().trim();
+    const agent = aiEngine.getStudyAgent();
+
+    if (/^study[:\s]+(.+)/i.test(lower)) {
+      const topicMatch = lower.match(/^study[:\s]+(.+)/i);
+      if (topicMatch) {
+        const topic = topicMatch[1].trim();
+        agent.addTopic(topic, studyDepth);
+        setStudyTopics(agent.getTopics());
+        if (!agent.getStats().isRunning) { agent.start(); setStudyRunning(true); }
+        const aiResponse = `Autonomous study activated for "${topic}". I'll continuously scan the web, extract knowledge, and build my understanding. Check the Brain tab to monitor my progress. Currently studying: ${agent.getActiveTopics().map(t => t.name).join(', ')}`;
+        setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
+        setIsTyping(false);
+        return;
+      }
+    }
+    if (/^stop studying[:\s]+(.+)/i.test(lower) || /^stop[:\s]+study[:\s]+(.+)/i.test(lower)) {
+      const topicMatch = lower.match(/(?:stop studying|stop study)[:\s]+(.+)/i);
+      if (topicMatch) {
+        const topic = topicMatch[1].trim();
+        const id = topic.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 60);
+        agent.removeTopic(id);
+        setStudyTopics(agent.getTopics());
+        setStudyStats(agent.getStats());
+        const remaining = agent.getActiveTopics();
+        const aiResponse = remaining.length > 0
+          ? `Stopped studying "${topic}". Still actively studying: ${remaining.map(t => t.name).join(', ')}`
+          : `Stopped studying "${topic}". No active study topics remaining. Autonomous study agent deactivated.`;
+        setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
+        setIsTyping(false);
+        return;
+      }
+    }
+    if (/^(what are you studying|what.*study|study status|study topics|show studies)/i.test(lower)) {
+      const topics = agent.getTopics();
+      const stats = agent.getStats();
+      if (topics.length === 0) {
+        setMessages(prev => [...prev, { role: 'assistant', content: "I'm not studying anything right now. Tell me \"Study: [topic]\" to start autonomous learning!", timestamp: Date.now() }]);
+        setIsTyping(false);
+        return;
+      }
+      const topicList = topics.map(t => `${t.status === 'active' ? '◆' : '◇'} ${t.name} (${t.depth}) — ${t.totalFactsLearned} facts, ${t.totalScans} scans, ${t.knowledgeGained.toFixed(0)}% knowledge`).join('\n');
+      const aiResponse = `Study Agent ${stats.isRunning ? 'ACTIVE' : 'INACTIVE'}\n\n${topicList}\n\nTotal: ${stats.totalFactsLearned} facts learned, ${stats.totalScansCompleted} scans completed.`;
+      setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
+      setIsTyping(false);
+      return;
+    }
+    if (/^(start studying|resume study|activate study)/i.test(lower)) {
+      agent.start();
+      setStudyRunning(true);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Autonomous study agent activated. Scanning all active topics...', timestamp: Date.now() }]);
+      setIsTyping(false);
+      return;
+    }
+    if (/^(pause studying|pause study|stop studying$|deactivate study)/i.test(lower)) {
+      agent.stop();
+      setStudyRunning(false);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Autonomous study agent paused. All topics preserved.', timestamp: Date.now() }]);
+      setIsTyping(false);
+      return;
+    }
 
     // Simulate neural pathway
     if (aiStats) {
@@ -714,6 +841,107 @@ export default function App() {
                         <MiniStat label="Edges" value={aiStats.knowledgeGraphEdges} icon={<GitBranch className="w-3 h-3" />} />
                         <MiniStat label="Transfer Rate" value={(aiStats.transferSuccessRate * 100).toFixed(1) + '%'} icon={<Sparkles className="w-3 h-3" />} />
                         <MiniStat label="Transfer Benefit" value={aiStats.averageTransferBenefit.toFixed(4)} icon={<TrendingUp className="w-3 h-3" />} />
+                      </div>
+                    </div>
+
+                    {/* ═══ AUTONOMOUS STUDY AGENT ═══ */}
+                    <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[2.5rem] p-6 border border-emerald-500/10 shadow-2xl relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-8 blur-3xl opacity-10 bg-emerald-500/20 rounded-full w-full h-full -z-10"></div>
+                      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent"></div>
+                      <div className="flex items-center justify-between mb-5">
+                        <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 flex items-center gap-3">
+                          <GraduationCap className="w-4 h-4 text-emerald-400/60" />
+                          Autonomous Study Agent
+                        </h3>
+                        <div className="flex items-center gap-2">
+                          <div className={cn("w-2 h-2 rounded-full", studyRunning && "bg-emerald-400 animate-[pulse_2s_ease-in-out_infinite]", !studyRunning && "bg-zinc-600")} style={studyRunning ? { boxShadow: "0 0 8px rgba(16,185,129,0.6)" } : undefined}></div>
+                          <span className={cn("text-[7px] font-mono uppercase tracking-widest", studyRunning ? "text-emerald-400" : "text-zinc-500")}>{studyRunning ? 'Active' : 'Idle'}</span>
+                        </div>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+                        <MiniStat label="Topics" value={studyStats?.activeTopics ?? 0} icon={<BookOpen className="w-3 h-3" />} />
+                        <MiniStat label="Facts" value={studyStats?.totalFactsLearned ?? 0} icon={<Database className="w-3 h-3" />} />
+                        <MiniStat label="Scans" value={studyStats?.totalScansCompleted ?? 0} icon={<Activity className="w-3 h-3" />} />
+                        <MiniStat label="Entities" value={studyStats?.totalEntitiesDiscovered ?? 0} icon={<Network className="w-3 h-3" />} />
+                      </div>
+
+                      {/* Study Status */}
+                      {studyStatusMsg && (
+                        <div className="mb-4 px-3 py-2 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
+                          <p className="text-[9px] font-mono text-emerald-300/70 uppercase tracking-widest">{studyStatusMsg}</p>
+                        </div>
+                      )}
+
+                      {/* Add Topic Input */}
+                      <div className="flex gap-2 mb-4">
+                        <input
+                          type="text" placeholder="Tell her what to study..."
+                          value={newStudyTopic} onChange={e => setNewStudyTopic(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleAddStudyTopic()}
+                          className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3 py-2.5 text-[12px] text-zinc-200 font-mono placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/30 transition-colors" />
+                        <button onClick={handleAddStudyTopic} disabled={!newStudyTopic.trim()}
+                          className="px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 disabled:opacity-20 transition-all hover:bg-emerald-500/20 flex items-center gap-1.5 shrink-0">
+                          <Plus className="w-3.5 h-3.5" />
+                          <span className="text-[9px] font-mono uppercase tracking-widest hidden sm:inline">Add</span>
+                        </button>
+                        <button onClick={handleToggleStudyAgent}
+                          className={cn("px-4 py-2.5 border rounded-xl transition-all flex items-center gap-1.5 shrink-0",
+                            studyRunning ? "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20" : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20")}>
+                          {studyRunning ? <><Pause className="w-3.5 h-3.5" /><span className="text-[9px] font-mono uppercase tracking-widest hidden sm:inline">Pause</span></> : <><Play className="w-3.5 h-3.5" /><span className="text-[9px] font-mono uppercase tracking-widest hidden sm:inline">Start</span></>}
+                        </button>
+                      </div>
+
+                      {/* Active Study Topics */}
+                      {studyTopics.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          {studyTopics.map(topic => (
+                            <div key={topic.id} className={cn("flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all",
+                              topic.status === 'active' ? "bg-emerald-500/[0.03] border-emerald-500/10" : "bg-white/[0.02] border-white/[0.06]")}>
+                              <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", topic.status === 'active' ? "bg-emerald-400" : "bg-zinc-600")}></div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] text-zinc-200 font-medium truncate">{topic.name}</span>
+                                  <span className="text-[7px] font-mono text-zinc-500 uppercase">{topic.depth}</span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-0.5">
+                                  <span className="text-[8px] font-mono text-zinc-500">{topic.totalFactsLearned} facts</span>
+                                  <span className="text-[8px] font-mono text-zinc-500">{topic.totalScans} scans</span>
+                                  <span className="text-[8px] font-mono text-zinc-500">{topic.knowledgeGained.toFixed(0)}%</span>
+                                  {/* Knowledge progress bar */}
+                                  <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden max-w-[60px]">
+                                    <div className="h-full bg-gradient-to-r from-emerald-500/50 to-cyan-400/50 rounded-full transition-all" style={{ width: `${Math.min(100, topic.knowledgeGained)}%` }}></div>
+                                  </div>
+                                </div>
+                              </div>
+                              <button onClick={() => handleRemoveStudyTopic(topic.id)} className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors shrink-0">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Controls Row */}
+                      <div className="flex items-center gap-4 pt-3 border-t border-white/[0.04]">
+                        <div className="flex items-center gap-2 flex-1">
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest">Interval</span>
+                          <input type="range" min="15" max="300" step="15" value={studyInterval}
+                            onChange={e => handleStudyIntervalChange(parseInt(e.target.value))}
+                            className="flex-1 accent-emerald-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-400 [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(16,185,129,0.4)]" />
+                          <span className="text-[9px] font-mono text-emerald-300 w-10 text-right">{studyInterval >= 60 ? `${(studyInterval / 60).toFixed(0)}m` : `${studyInterval}s`}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest">Depth</span>
+                          <select value={studyDepth} onChange={e => setStudyDepth(e.target.value as StudyDepth)}
+                            className="bg-white/[0.03] border border-white/[0.06] rounded-lg px-2 py-1 text-[9px] font-mono text-zinc-300 focus:outline-none focus:border-emerald-500/30 appearance-none cursor-pointer">
+                            <option value="SURFACE">Surface</option>
+                            <option value="MODERATE">Moderate</option>
+                            <option value="DEEP">Deep</option>
+                            <option value="EXHAUSTIVE">Exhaustive</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
 
