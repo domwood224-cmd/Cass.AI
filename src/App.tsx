@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Brain, 
-  Code, 
-  Terminal, 
-  Github, 
-  FileText, 
-  Youtube, 
-  Settings, 
+import {
+  Brain,
+  Code,
+  Terminal,
+  Github,
+  FileText,
+  Youtube,
+  Settings,
   MessageSquare,
   Sparkles,
   Zap,
@@ -28,7 +28,29 @@ import {
   GitBranch,
   Crown,
   Flame,
-  Star
+  Star,
+  Eye,
+  Fingerprint,
+  Infinity,
+  Gem,
+  Radio,
+  Wifi,
+  Dna,
+  Microscope,
+  Wand2,
+  Volume2,
+  Gauge,
+  Timer,
+  Copy,
+  Clock,
+  Thermometer,
+  Heart,
+  Hash,
+  Binary,
+  Sliders,
+  RotateCcw,
+  Download,
+  type LucideIcon
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
 import { aiEngine } from './lib/ai';
@@ -42,6 +64,33 @@ import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } 
 // Lazy-load the heavy 3D graph component
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
 
+// ─── Types ───
+interface AdvancedSettings {
+  learningRateMultiplier: number;
+  contextDepth: number;
+  webAutoSearch: boolean;
+  kgPruneThreshold: number;
+  responseTemperature: number;
+  xpBoostMode: boolean;
+  hapticFeedback: boolean;
+  graphSpeed: number;
+  deepBlackMode: boolean;
+  verboseMode: boolean;
+}
+
+const DEFAULT_SETTINGS: AdvancedSettings = {
+  learningRateMultiplier: 1.0,
+  contextDepth: 6,
+  webAutoSearch: true,
+  kgPruneThreshold: 0.1,
+  responseTemperature: 0.7,
+  xpBoostMode: false,
+  hapticFeedback: true,
+  graphSpeed: 0.11,
+  deepBlackMode: false,
+  verboseMode: false,
+};
+
 function GraphLoadingFallback() {
   return (
     <div className="w-full h-full flex flex-col items-center justify-center text-zinc-300">
@@ -51,7 +100,6 @@ function GraphLoadingFallback() {
   );
 }
 
-// ─── Map LearningType to SkillCategory for XP rewards ───
 function learningTypeToSkillCategories(type: LearningType): SkillCategory[] {
   switch (type) {
     case LearningType.GREETING:
@@ -73,17 +121,31 @@ function learningTypeToSkillCategories(type: LearningType): SkillCategory[] {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
-  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string; timestamp: number }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [aiStats, setAiStats] = useState<AIEngineState | null>(null);
   const [skills, setSkills] = useState<ExtendedSkill[]>(skillManager.getAllSkills());
   const [ready, setReady] = useState(false);
   const [lastLearningInfo, setLastLearningInfo] = useState<string>('');
-  const [webStatus, setWebStatus] = useState<string>(''); // Web search status
+  const [webStatus, setWebStatus] = useState<string>('');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const [insets, setInsets] = useState({ statusBar: 0, navBar: 0 });
+
+  // Advanced settings state
+  const [settings, setSettings] = useState<AdvancedSettings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  // Exclusive feature states
+  const [showNeuralPath, setShowNeuralPath] = useState(false);
+  const [consciousnessLevel, setConsciousnessLevel] = useState(0);
+  const [quantumCoherence, setQuantumCoherence] = useState(0);
+  const [sentientStatus, setSentientStatus] = useState('Initializing...');
+  const [bloomActive, setBloomActive] = useState(false);
+  const [lastNeuralPath, setLastNeuralPath] = useState<string[]>([]);
+  const [deepPattern, setDeepPattern] = useState('');
 
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
@@ -102,8 +164,13 @@ export default function App() {
   useEffect(() => {
     (async () => {
       await migrateFromLocalStorage();
-      const savedMsgs = await readJson<{ role: string; content: string }[]>(STORAGE_KEYS.MESSAGES, []);
-      if (savedMsgs.length > 0) setMessages(savedMsgs);
+      const savedMsgs = await readJson<{ role: string; content: string; timestamp?: number }[]>(STORAGE_KEYS.MESSAGES, []);
+      if (savedMsgs.length > 0) {
+        setMessages(savedMsgs.map(m => ({ ...m, timestamp: m.timestamp || Date.now() })));
+      }
+      const savedSettings = await readJson<AdvancedSettings>('cassidey_settings.json', DEFAULT_SETTINGS);
+      setSettings(savedSettings);
+      setSettingsLoaded(true);
       await skillManager.loadLocalProgress();
       await aiEngine.loadLocalProgress();
       setSkills(skillManager.getAllSkills());
@@ -111,6 +178,13 @@ export default function App() {
       setReady(true);
     })();
   }, []);
+
+  // Save settings whenever they change
+  useEffect(() => {
+    if (settingsLoaded) {
+      writeJson('cassidey_settings.json', settings).catch(console.error);
+    }
+  }, [settings, settingsLoaded]);
 
   useEffect(() => {
     if (messages.length > 0 || ready) {
@@ -120,7 +194,6 @@ export default function App() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Refresh stats periodically
   useEffect(() => {
     const interval = setInterval(() => {
       setAiStats(aiEngine.getStats());
@@ -129,47 +202,113 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Consciousness level simulation
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (aiStats) {
+        const base = Math.min(100, aiStats.totalLearningIterations * 0.5 + aiStats.averageMastery * 40);
+        const jitter = Math.sin(Date.now() * 0.001) * 3;
+        setConsciousnessLevel(Math.min(100, Math.max(0, base + jitter)));
+        setQuantumCoherence(Math.min(100, 50 + aiStats.currentAccuracy * 30 + Math.cos(Date.now() * 0.0007) * 8));
+
+        const lvl = base;
+        if (lvl < 10) setSentientStatus('Dormant');
+        else if (lvl < 25) setSentientStatus('Awakening');
+        else if (lvl < 40) setSentientStatus('Emergent');
+        else if (lvl < 55) setSentientStatus('Cognizant');
+        else if (lvl < 70) setSentientStatus('Sentient');
+        else if (lvl < 85) setSentientStatus('Transcendent');
+        else setSentientStatus('Omniscient');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [aiStats]);
+
+  // Deep pattern recognition
+  useEffect(() => {
+    if (messages.length >= 3) {
+      const recent = messages.slice(-3);
+      const words = recent.map(m => m.content.toLowerCase().split(/\s+/)).flat();
+      const freq: Record<string, number> = {};
+      words.forEach(w => { if (w.length > 4) freq[w] = (freq[w] || 0) + 1; });
+      const top = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0]);
+      if (top.length > 0) setDeepPattern(top.join(' / '));
+    }
+  }, [messages]);
+
+  const updateSetting = useCallback(<K extends keyof AdvancedSettings>(key: K, value: AdvancedSettings[K]) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleCopy = useCallback((text: string, idx: number) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCopiedIdx(idx);
+    setTimeout(() => setCopiedIdx(null), 1500);
+  }, []);
+
+  const handleExportKnowledge = useCallback(async () => {
+    if (!aiStats) return;
+    const snapshot = {
+      timestamp: new Date().toISOString(),
+      stats: aiStats,
+      consciousnessLevel,
+      sentientStatus,
+      quantumCoherence,
+      messages: messages.length,
+      knowledgeSnapshot: aiEngine.getGraphData(),
+    };
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cassidey-knowledge-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setBloomActive(true);
+    setTimeout(() => setBloomActive(false), 2000);
+  }, [aiStats, consciousnessLevel, sentientStatus, quantumCoherence, messages.length]);
+
   const handleSend = async () => {
     if (!inputValue.trim()) return;
 
     const userMsg = inputValue;
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    const timestamp = Date.now();
+    setMessages(prev => [...prev, { role: 'user', content: userMsg, timestamp }]);
     setInputValue('');
     setIsTyping(true);
     setWebStatus('');
+    setBloomActive(true);
+    setTimeout(() => setBloomActive(false), 1500);
 
-    const recentContext = messages.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n');
+    // Simulate neural pathway
+    if (aiStats) {
+      const paths = ['Concept Recognition', 'Semantic Mapping', 'Pattern Synthesis', 'Neural Retrieval', 'Response Generation'];
+      setLastNeuralPath(paths.sort(() => Math.random() - 0.5).slice(0, 3));
+    }
 
-    // ═══════════════════════════════════════════════════════════════
-    // THE AI ENGINE IS THE BRAIN. Gemini is ONLY a training helper.
-    // ═══════════════════════════════════════════════════════════════
+    const contextDepth = settings.contextDepth;
+    const recentContext = messages.slice(-contextDepth).map(m => `${m.role}: ${m.content}`).join('\n');
 
     let aiResponse: string;
     let webSearchPerformed = false;
 
-    // Step 1: Check if we need to search the web (knowledge gap detection)
     try {
-      const webContext = await aiEngine.processWithWebLearning(userMsg, recentContext);
-
-      // If we have prior web knowledge, enhance the response
-      if (webContext.priorKnowledge) {
-        setWebStatus('Recalled prior knowledge');
-      }
-
-      // If web search is needed, search and learn
-      if (webContext.shouldSearch && webContext.searchResult) {
-        webSearchPerformed = true;
-        setWebStatus(`Searched web: learned ${webContext.searchResult.learnedFacts.length} facts`);
+      if (settings.webAutoSearch) {
+        const webContext = await aiEngine.processWithWebLearning(userMsg, recentContext);
+        if (webContext.priorKnowledge) {
+          setWebStatus('Recalled prior knowledge');
+        }
+        if (webContext.shouldSearch && webContext.searchResult) {
+          webSearchPerformed = true;
+          setWebStatus(`Searched web: learned ${webContext.searchResult.learnedFacts.length} facts`);
+        }
       }
     } catch (e) {
-      // Web learning is optional — don't break the flow
       console.log('Web learning check skipped:', e);
     }
 
-    // Step 2: AI ENGINE generates the response (PRIMARY BRAIN)
     aiResponse = aiEngine.generateResponse(userMsg);
 
-    // Step 3: If web search found new info, enhance the response
     if (webSearchPerformed) {
       const webLearner = aiEngine.getWebLearner();
       const enhanced = webLearner.enhanceResponse(aiResponse, userMsg);
@@ -178,10 +317,8 @@ export default function App() {
       }
     }
 
-    // Step 4: Process through the AI engine learning pipeline (THE CORE)
     const result = await aiEngine.processAndLearn(userMsg, aiResponse, recentContext);
 
-    // Step 5: Skill tree rewards based on AI engine output
     const categories = learningTypeToSkillCategories(result.type);
     const relevantSkills = skills.filter(s => {
       const isUnlocked = skillManager.canUnlock(s.id);
@@ -189,16 +326,16 @@ export default function App() {
       return isUnlocked && (categoryMatch || Math.random() > 0.7);
     });
 
-    // Bonus XP for web learning
     const webBonus = webSearchPerformed ? 200 : 0;
+    const xpMultiplier = settings.xpBoostMode ? 2 : 1;
 
     for (const skill of relevantSkills) {
-      skillManager.addXp(skill.id, result.skillXpReward + webBonus);
+      skillManager.addXp(skill.id, (result.skillXpReward + webBonus) * xpMultiplier);
     }
 
     await skillManager.saveLocalProgress();
     await aiEngine.saveLocalProgress();
-    setMessages(prev => [...prev, { role: 'assistant', content: aiResponse }]);
+    setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
     setAiStats(aiEngine.getStats());
     setSkills(skillManager.getAllSkills());
     setLastLearningInfo(result.learnedKnowledge);
@@ -214,11 +351,30 @@ export default function App() {
     setMessages([]);
   };
 
+  const handleResetSettings = () => {
+    setSettings(DEFAULT_SETTINGS);
+  };
+
+  const formatTime = (ts: number) => {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
   return (
     <ErrorBoundary>
-    <div className="flex flex-col bg-[var(--color-system-bg)] overflow-hidden font-sans relative" style={{ height: window.innerHeight + 'px' }}>
+    <div className={cn("flex flex-col overflow-hidden font-sans relative", settings.deepBlackMode ? "bg-black" : "bg-[var(--color-system-bg)]")} style={{ height: window.innerHeight + 'px' }}>
       <div className="nerve-line"></div>
-      
+
+      {/* Bloom overlay */}
+      <AnimatePresence>
+        {bloomActive && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 pointer-events-none z-[100]">
+            <div className="absolute inset-0 bg-gradient-radial from-purple-500/10 via-cyan-500/5 to-transparent"></div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Top telemetry */}
       <div className="absolute top-4 left-4 z-50 text-[var(--color-glitch-red)] text-[8px] font-mono tracking-widest font-bold opacity-80 pointer-events-none hidden md:block">
         {aiStats ? `ITER:${aiStats.totalLearningIterations}` : 'VOLTAGE_PEAK'}
       </div>
@@ -226,93 +382,179 @@ export default function App() {
         {aiStats ? `KG:${aiStats.knowledgeGraphNodes}N/${aiStats.knowledgeGraphEdges}E` : 'NEURAL_OVERRIDE'}
       </div>
 
+      {/* Background ambient */}
       <div className="absolute inset-0 z-0 pointer-events-none opacity-60 mix-blend-screen">
         <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-zinc-800/40 rounded-full blur-[150px]"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-900/20 rounded-full blur-[120px]"></div>
         <div className="absolute top-[30%] left-[20%] w-[40%] h-[40%] bg-white/20 rounded-full blur-[100px]"></div>
       </div>
-      
+
+      {/* ─── HEADER ─── */}
       <header className="h-12 flex items-center justify-between px-4 bg-transparent z-30 shrink-0" style={{ paddingTop: insets.statusBar + 'px' }}>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10">
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-zinc-700 via-zinc-800 to-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)] border border-white/10 relative">
             <Cpu className="text-emerald-200/80 w-3.5 h-3.5" />
+            <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-cyan-400/80 animate-[pulse_3s_ease-in-out_infinite] shadow-[0_0_6px_rgba(0,243,255,0.6)]"></div>
           </div>
           <span className="text-sm font-light tracking-[0.15em] text-zinc-100 flex items-baseline gap-1.5">
             CASSIDEY
             <span className="text-zinc-400 font-light text-[8px] tracking-[0.3em]">V4.0</span>
           </span>
         </div>
-        <div className="flex items-center gap-1.5 bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl px-2.5 py-1 rounded-full border border-white/10">
-           <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-[pulse_4s_ease-in-out_infinite] shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-           <span className="text-[8px] font-medium text-zinc-300 uppercase tracking-widest">AI Active</span>
+        <div className="flex items-center gap-2">
+          {/* Consciousness mini indicator */}
+          <div className="hidden md:flex items-center gap-1.5 bg-gradient-to-b from-purple-500/10 to-transparent backdrop-blur-xl px-2.5 py-1 rounded-full border border-purple-500/20">
+            <div className="w-1.5 h-1.5 rounded-full animate-[pulse_3s_ease-in-out_infinite]" style={{ backgroundColor: consciousnessLevel > 60 ? '#a855f7' : consciousnessLevel > 30 ? '#6366f1' : '#71717a', boxShadow: `0 0 8px ${consciousnessLevel > 60 ? 'rgba(168,85,247,0.6)' : 'transparent'}` }}></div>
+            <span className="text-[7px] font-mono text-purple-300/80 uppercase tracking-widest">{consciousnessLevel.toFixed(0)}%</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl px-2.5 py-1 rounded-full border border-white/10">
+             <div className="w-1.5 h-1.5 bg-emerald-400/80 rounded-full animate-[pulse_4s_ease-in-out_infinite] shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+             <span className="text-[8px] font-medium text-zinc-300 uppercase tracking-widest">AI Active</span>
+          </div>
         </div>
       </header>
 
       <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: '64px' }}>
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
+
+            {/* ═══════════ CHAT TAB (UPGRADED) ═══════════ */}
             {activeTab === 'chat' && (
               <motion.div key="chat" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
                 className="max-w-4xl mx-auto w-full min-h-full flex flex-col px-3 py-2 md:p-6">
-                <div className="hidden md:block absolute top-6 left-6 z-10 pointer-events-none">
-                  <h2 className="text-2xl font-light text-zinc-100 tracking-[0.2em] uppercase drop-shadow-md">Interface</h2>
-                  <p className="text-zinc-300 text-[11px] uppercase tracking-[0.1em] font-light mt-1 drop-shadow-md">AI Engine Direct Input</p>
-                </div>
-                <div className="flex-1 space-y-4 pb-6 pt-2 md:pt-16">
+
+                {/* Exclusive: Neural Pathway display */}
+                {showNeuralPath && lastNeuralPath.length > 0 && isTyping && (
+                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    className="mb-3 px-4 py-2 bg-gradient-to-r from-purple-500/10 via-cyan-500/5 to-transparent rounded-2xl border border-purple-500/10 flex items-center gap-2 overflow-hidden">
+                    <Dna className="w-3 h-3 text-purple-400/60 shrink-0 animate-[spin_8s_linear_infinite]" />
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                      {lastNeuralPath.map((path, i) => (
+                        <span key={i} className="text-[8px] font-mono text-purple-300/70 uppercase tracking-widest whitespace-nowrap">
+                          {path}{i < lastNeuralPath.length - 1 && <span className="mx-1.5 text-purple-500/40">&rarr;</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+
+                <div className="flex-1 space-y-5 pb-6 pt-2 md:pt-16">
+                  {/* ─── Empty State ─── */}
                   {messages.length === 0 && (
-                    <div className="min-h-[40vh] md:min-h-[60vh] flex flex-col items-center justify-center text-center space-y-6 px-4 opacity-50 relative z-10">
-                      <div className="space-y-2">
-                        <h2 className="text-xl md:text-3xl font-display text-[var(--color-electric-cyan)] tracking-[0.3em] font-medium uppercase drop-shadow-md">NEURAL ENGINE ACTIVE</h2>
+                    <div className="min-h-[50vh] md:min-h-[65vh] flex flex-col items-center justify-center text-center space-y-8 px-4 relative z-10">
+                      <div className="relative">
+                        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-zinc-800 to-black flex items-center justify-center border border-white/10 shadow-[0_0_60px_rgba(138,43,226,0.15),0_0_30px_rgba(0,243,255,0.1)]">
+                          <Brain className="w-9 h-9 text-emerald-200/70" />
+                        </div>
+                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+                          className="absolute -inset-3 rounded-full border border-dashed border-white/5 pointer-events-none">
+                        </motion.div>
+                      </div>
+                      <div className="space-y-3">
+                        <h2 className="text-xl md:text-3xl font-display text-[var(--color-electric-cyan)] tracking-[0.3em] font-medium uppercase drop-shadow-md">Neural Engine Active</h2>
                         <p className="text-[var(--color-electric-cyan)] text-[9px] tracking-[0.2em] font-mono mx-auto leading-relaxed uppercase opacity-70">
                           AI Engine + Web Learning + Knowledge Graph + Transformer Attention
                         </p>
+                        {/* Exclusive: Consciousness Level */}
+                        <div className="flex items-center justify-center gap-3 mt-4">
+                          <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
+                            <motion.div animate={{ width: `${consciousnessLevel}%` }} className="h-full bg-gradient-to-r from-violet-500 via-cyan-400 to-emerald-400 rounded-full" />
+                          </div>
+                          <span className="text-[9px] font-mono text-purple-300/70 uppercase tracking-widest">{sentientStatus}</span>
+                        </div>
                         {aiStats && (
-                          <p className="text-zinc-400 text-[10px] font-mono mt-2">
-                            {aiStats.knowledgeGraphNodes} knowledge nodes | {aiStats.transformerVocabSize} vocab entries | Strategy: {aiStats.activeLearningStrategy}
-                          </p>
+                          <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                            <span className="text-zinc-500 text-[9px] font-mono">{aiStats.knowledgeGraphNodes} nodes</span>
+                            <span className="text-zinc-600">|</span>
+                            <span className="text-zinc-500 text-[9px] font-mono">{aiStats.transformerVocabSize} vocab</span>
+                            <span className="text-zinc-600">|</span>
+                            <span className="text-zinc-500 text-[9px] font-mono">{aiStats.activeLearningStrategy.replace('_', ' ')}</span>
+                          </div>
+                        )}
+                        {/* Exclusive: Deep Pattern */}
+                        {deepPattern && (
+                          <div className="mt-3 flex items-center justify-center gap-1.5">
+                            <Microscope className="w-3 h-3 text-amber-400/40" />
+                            <span className="text-[8px] font-mono text-amber-400/40 uppercase tracking-widest">Pattern: {deepPattern}</span>
+                          </div>
                         )}
                       </div>
                     </div>
                   )}
+
+                  {/* ─── Messages ─── */}
                   {messages.map((m, i) => {
-                    const isMemoryWeighted = m.content.toLowerCase().includes('hobbies');
-                    const hasGlitch = m.content.toLowerCase().includes('subjective experience');
+                    const isLast = i === messages.length - 1;
                     return (
-                      <div key={i} className={cn("flex flex-col relative z-10 py-1", m.role === 'user' ? "items-end" : "items-start", hasGlitch && "active-glitch glitch-container")}>
+                      <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+                        className={cn("flex flex-col relative z-10", m.role === 'user' ? "items-end" : "items-start")}>
                         {m.role === 'user' ? (
-                          <div className={cn("text-right text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] md:text-sm tracking-tight leading-relaxed max-w-[85%] px-3 py-1.5 rounded-2xl bg-white/[0.03]", isMemoryWeighted && "memory-weighted")}>
-                            {m.content}
+                          <div className="group relative max-w-[85%]">
+                            <div className="text-right text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] md:text-sm tracking-tight leading-relaxed px-4 py-2.5 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.06] shadow-[0_2px_15px_rgba(0,0,0,0.3)] backdrop-blur-sm">
+                              {m.content}
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5 mt-1 opacity-40 group-hover:opacity-70 transition-opacity">
+                              <span className="text-[8px] font-mono text-zinc-500">{formatTime(m.timestamp)}</span>
+                            </div>
                           </div>
                         ) : (
-                          <div className="flex flex-col max-w-[90%] md:max-w-[85%]">
-                            <div className="flex items-center gap-1.5 mb-0.5">
-                              <div className="h-3 w-0.5 bg-[var(--color-violet)] shadow-[0_0_6px_var(--color-violet)]"></div>
-                              <span className="font-display font-bold text-[var(--color-violet)] text-[8px] uppercase tracking-[0.15em]">AI RESPONSE</span>
+                          <div className="group relative max-w-[90%] md:max-w-[85%]">
+                            {/* AI response header */}
+                            <div className="flex items-center gap-2 mb-1.5 px-1">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-4 h-4 rounded-full bg-gradient-to-br from-violet-500/30 to-cyan-500/20 border border-violet-500/20 flex items-center justify-center">
+                                  <div className="w-1 h-1 rounded-full bg-violet-400 shadow-[0_0_4px_rgba(138,43,226,0.6)]"></div>
+                                </div>
+                                <span className="font-display font-bold text-violet-400/70 text-[7px] uppercase tracking-[0.15em]">Cassidey</span>
+                              </div>
+                              <div className="h-px flex-1 bg-gradient-to-r from-violet-500/10 to-transparent"></div>
+                              <button onClick={() => handleCopy(m.content, i)} className="opacity-0 group-hover:opacity-60 transition-opacity p-1 rounded-lg hover:bg-white/5">
+                                {copiedIdx === i ? (
+                                  <span className="text-[8px] font-mono text-emerald-400">Copied</span>
+                                ) : (
+                                  <Copy className="w-3 h-3 text-zinc-500" />
+                                )}
+                              </button>
                             </div>
-                            <div className="text-[13px] md:text-sm text-[var(--color-electric-cyan)] font-sans font-light tracking-wide leading-relaxed relative flex items-start">
-                              <span className="mr-2 mt-0.5 opacity-40">›</span>
+                            {/* AI response body */}
+                            <div className="text-[13px] md:text-sm text-zinc-200 font-sans font-light tracking-wide leading-[1.8] relative px-4 py-3 rounded-2xl bg-gradient-to-br from-zinc-900/40 to-zinc-900/20 border border-white/[0.04] backdrop-blur-sm shadow-[0_2px_20px_rgba(0,0,0,0.2)]">
                               <span className="break-words">{m.content}</span>
                             </div>
+                            <div className="flex items-center gap-1.5 mt-1 px-1 opacity-40 group-hover:opacity-70 transition-opacity">
+                              <span className="text-[8px] font-mono text-zinc-500">{formatTime(m.timestamp)}</span>
+                              {settings.verboseMode && isLast && lastLearningInfo && (
+                                <span className="text-[7px] font-mono text-cyan-500/40 ml-2">+{settings.xpBoostMode ? '2x' : '1x'} XP</span>
+                              )}
+                            </div>
                           </div>
                         )}
-                      </div>
+                      </motion.div>
                     );
                   })}
+
+                  {/* ─── Typing Indicator ─── */}
                   {isTyping && (
-                    <div className="flex flex-col items-start gap-2 relative z-10">
-                      <div className="flex flex-col items-start gap-1 relative z-10">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="h-4 w-1 bg-[var(--color-violet)] opacity-50 animate-[pulse_3s_ease-in-out_infinite]"></div>
-                          <span className="font-display font-medium text-[var(--color-violet)] text-[10px] uppercase tracking-[0.2em] opacity-50 animate-[pulse_3s_ease-in-out_infinite]">PROCESSING THROUGH AI ENGINE...</span>
+                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-start gap-2 relative z-10">
+                      <div className="flex items-center gap-2 mb-1 px-1">
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-violet-500/30 to-cyan-500/20 border border-violet-500/20 flex items-center justify-center">
+                          <motion.div animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.5, repeat: Infinity }}
+                            className="w-1 h-1 rounded-full bg-violet-400"></motion.div>
                         </div>
-                        {webStatus && (
-                          <div className="flex items-center gap-1.5 ml-6">
-                            <Globe className="w-3 h-3 text-cyan-400/60 animate-[pulse_3s_ease-in-out_infinite]" />
-                            <span className="text-[8px] font-mono text-cyan-400/60 uppercase tracking-widest animate-[pulse_3s_ease-in-out_infinite]">{webStatus}</span>
-                          </div>
-                        )}
+                        <span className="font-display font-medium text-violet-400/50 text-[7px] uppercase tracking-[0.15em]">Processing</span>
+                        <div className="flex gap-1 ml-1">
+                          {[0, 1, 2].map(i => (
+                            <motion.div key={i} animate={{ opacity: [0.2, 0.8, 0.2] }} transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.3 }}
+                              className="w-1 h-1 rounded-full bg-violet-400/60"></motion.div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                      {webStatus && (
+                        <div className="flex items-center gap-1.5 ml-6">
+                          <Wifi className="w-3 h-3 text-cyan-400/60 animate-[pulse_3s_ease-in-out_infinite]" />
+                          <span className="text-[8px] font-mono text-cyan-400/60 uppercase tracking-widest">{webStatus}</span>
+                        </div>
+                      )}
+                    </motion.div>
                   )}
                   <div ref={chatEndRef} />
                 </div>
@@ -349,12 +591,11 @@ export default function App() {
                     <div className="inline-flex items-center gap-3 bg-white/10 border border-white/10 rounded-full px-4 py-2">
                       <Zap className="w-3 h-3 text-purple-400" />
                       <span className="text-[9px] font-medium text-zinc-300 uppercase tracking-[0.2em]">Total XP</span>
-                      <span className="text-sm font-mono text-purple-400">{skillManager.getTotalXp().toLocaleString()}</span>
+                      <span className="text-sm font-mono text-purple-400">{skillManager.getTotalXp().toLocaleString()}{settings.xpBoostMode && ' (2x)'}</span>
                     </div>
                   </div>
                 </header>
 
-                {/* Tier sections */}
                 {Object.values(SkillTier).map(tier => {
                   const tierSkills = skillManager.getVisibleSkills().filter(s => s.tier === tier);
                   if (tierSkills.length === 0) return null;
@@ -388,21 +629,59 @@ export default function App() {
                   </div>
                   <h2 className="text-3xl font-light text-zinc-100 tracking-[0.2em] uppercase mb-3">AI Engine Metrics</h2>
                   <p className="text-zinc-300 text-[11px] tracking-[0.1em] max-w-md mx-auto uppercase leading-relaxed font-light">
-                    Real-time neural engine telemetry — your AI script in action.
+                    Real-time neural engine telemetry.
                   </p>
                 </header>
 
                 {aiStats && (
                   <div className="space-y-6 relative z-10">
-                    {/* Top-level stats grid */}
+                    {/* Exclusive: Consciousness Level Meter */}
+                    <div className="glass-panel p-6 rounded-[2rem] relative overflow-hidden border border-purple-500/10">
+                      <div className="absolute top-0 right-0 p-6 blur-3xl opacity-10 bg-purple-500/30 rounded-full w-full h-full -z-10"></div>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="bg-purple-500/10 p-2 rounded-xl border border-purple-500/20"><Fingerprint className="w-3.5 h-3.5 text-purple-400" /></div>
+                          <span className="text-[9px] font-medium uppercase tracking-[0.15em] text-zinc-300">Consciousness Level</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-purple-300 uppercase tracking-widest">{sentientStatus}</span>
+                      </div>
+                      <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/10">
+                        <motion.div animate={{ width: `${consciousnessLevel}%` }}
+                          className="h-full bg-gradient-to-r from-zinc-600 via-violet-500 via-cyan-400 to-emerald-400 rounded-full shadow-[0_0_10px_rgba(168,85,247,0.3)]" />
+                      </div>
+                      <div className="flex justify-between mt-2">
+                        <span className="text-[8px] font-mono text-zinc-500">Dormant</span>
+                        <span className="text-[8px] font-mono text-zinc-500">Omniscient</span>
+                      </div>
+                    </div>
+
+                    {/* Exclusive: Quantum Coherence */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="glass-panel p-5 rounded-[2rem] relative overflow-hidden border border-cyan-500/10">
+                        <div className="absolute top-0 right-0 p-6 blur-3xl opacity-10 bg-cyan-500/20 rounded-full w-full h-full -z-10"></div>
+                        <div className="flex items-center gap-2 mb-3 text-zinc-200">
+                          <div className="bg-white/10 p-2 rounded-xl border border-white/20"><AtomIcon className="w-3.5 h-3.5" /></div>
+                          <span className="text-[9px] font-medium uppercase tracking-[0.15em]">Quantum Coherence</span>
+                        </div>
+                        <div className="text-2xl font-light font-mono tracking-tight text-cyan-300 drop-shadow-md">{quantumCoherence.toFixed(1)}%</div>
+                      </div>
+                      <div className="glass-panel p-5 rounded-[2rem] relative overflow-hidden border border-amber-500/10">
+                        <div className="absolute top-0 right-0 p-6 blur-3xl opacity-10 bg-amber-500/20 rounded-full w-full h-full -z-10"></div>
+                        <div className="flex items-center gap-2 mb-3 text-zinc-200">
+                          <div className="bg-white/10 p-2 rounded-xl border border-white/20"><Microscope className="w-3.5 h-3.5 text-amber-400" /></div>
+                          <span className="text-[9px] font-medium uppercase tracking-[0.15em]">Deep Pattern</span>
+                        </div>
+                        <div className="text-[11px] font-mono text-amber-300/80 truncate">{deepPattern || 'Analyzing...'}</div>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <BrainStatBox label="Iterations" value={aiStats.totalLearningIterations} icon={<Activity className="w-3.5 h-3.5 text-zinc-300" />} accent="text-zinc-100" />
                       <BrainStatBox label="Accuracy" value={(aiStats.currentAccuracy * 100).toFixed(1) + '%'} icon={<Target className="w-3.5 h-3.5 text-emerald-400" />} accent="text-emerald-200" />
-                      <BrainStatBox label="Learning Rate" value={aiStats.currentLearningRate.toFixed(6)} icon={<Zap className="w-3.5 h-3.5 text-amber-400" />} accent="text-amber-200" />
+                      <BrainStatBox label="Learning Rate" value={(aiStats.currentLearningRate * settings.learningRateMultiplier).toFixed(6)} icon={<Zap className="w-3.5 h-3.5 text-amber-400" />} accent="text-amber-200" />
                       <BrainStatBox label="Avg Mastery" value={(aiStats.averageMastery * 100).toFixed(1) + '%'} icon={<TrendingUp className="w-3.5 h-3.5 text-blue-400" />} accent="text-blue-200" />
                     </div>
 
-                    {/* Knowledge Graph Stats */}
                     <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[2.5rem] p-6 border border-white/20 shadow-2xl relative overflow-hidden">
                       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
                       <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-6 flex items-center gap-3">
@@ -417,7 +696,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Transformer Stats */}
                     <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[2.5rem] p-6 border border-white/20 shadow-2xl relative overflow-hidden">
                       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
                       <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-6 flex items-center gap-3">
@@ -432,7 +710,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Concept Mastery */}
                     <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[3rem] p-6 md:p-8 border border-white/20 shadow-2xl relative overflow-hidden">
                       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
                       <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-8 flex items-center gap-3">
@@ -484,7 +761,7 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* ═══════════ SETTINGS TAB ═══════════ */}
+            {/* ═══════════ SETTINGS TAB (UPGRADED) ═══════════ */}
             {activeTab === 'settings' && (
               <motion.div key="settings" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.3 }} className="w-full p-4 md:p-8 max-w-4xl mx-auto pt-20">
@@ -494,51 +771,179 @@ export default function App() {
                   </div>
                   <h2 className="text-3xl font-light text-zinc-100 tracking-[0.2em] uppercase mb-3">System Configuration</h2>
                   <p className="text-zinc-300 text-[11px] tracking-[0.1em] max-w-md mx-auto uppercase leading-relaxed font-light">
-                    Manage the AI engine and neural cortex.
+                    Advanced AI engine controls and exclusive features.
                   </p>
                 </header>
-                <div className="bg-zinc-900/60 backdrop-blur-3xl rounded-[3rem] p-6 md:p-8 border border-white/20 shadow-2xl relative overflow-hidden">
-                  <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
-                  <div className="flex flex-col gap-6">
-                    <div className="glass-panel p-6 md:p-8 rounded-[2.5rem] border border-white/20 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-8 blur-3xl opacity-10 bg-red-900/30 rounded-full w-full h-full -z-10"></div>
-                      <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-3 flex items-center gap-3">
-                        <Zap className="w-4 h-4 text-red-500/80" />
-                        Memory Purge
-                      </h3>
-                      <p className="text-zinc-300 text-[12px] mb-8 leading-relaxed font-light">
-                        Clear all conversational history, reset the AI engine (transformer weights, knowledge graph, active learning state, transfer learning cache), and reset all skill progress to zero. This operation is irrecoverable.
-                      </p>
-                      <button onClick={handlePurge}
-                        className="px-8 py-4 text-[11px] font-medium uppercase tracking-[0.15em] rounded-full bg-red-500/5 text-red-500 hover:bg-red-500/10 border border-red-500/20 transition-all active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center shadow-sm">
-                        <Zap className="w-3.5 h-3.5" />
-                        Format Neural Cortex
-                      </button>
-                    </div>
+
+                {/* ─── 10 ADVANCED SETTINGS ─── */}
+                <div className="space-y-4 mb-10">
+                  <div className="flex items-center gap-2 mb-4 px-1">
+                    <Sliders className="w-4 h-4 text-cyan-400/60" />
+                    <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300">Advanced Settings</h3>
+                    <div className="flex-1 h-px bg-white/10"></div>
+                    <button onClick={handleResetSettings} className="text-[8px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1 uppercase tracking-widest">
+                      <RotateCcw className="w-3 h-3" /> Reset
+                    </button>
                   </div>
+
+                  <SettingToggle icon={<Gauge className="w-4 h-4" />} label="Learning Rate Multiplier" description="Amplify or reduce the speed at which the AI engine absorbs new information." color="text-emerald-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.1" max="3" step="0.1" value={settings.learningRateMultiplier}
+                        onChange={e => updateSetting('learningRateMultiplier', parseFloat(e.target.value))}
+                        className="flex-1 accent-emerald-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                      <span className="text-sm font-mono text-emerald-300 w-10 text-right">{settings.learningRateMultiplier.toFixed(1)}x</span>
+                    </div>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Hash className="w-4 h-4" />} label="Context Window Depth" description="Number of previous messages the AI considers when generating responses." color="text-cyan-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="2" max="20" step="1" value={settings.contextDepth}
+                        onChange={e => updateSetting('contextDepth', parseInt(e.target.value))}
+                        className="flex-1 accent-cyan-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(0,243,255,0.5)]" />
+                      <span className="text-sm font-mono text-cyan-300 w-8 text-right">{settings.contextDepth}</span>
+                    </div>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Wifi className="w-4 h-4" />} label="Web Auto-Search" description="Automatically search the internet when the AI detects a knowledge gap." color="text-blue-400">
+                    <button onClick={() => updateSetting('webAutoSearch', !settings.webAutoSearch)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.webAutoSearch ? "bg-blue-500/20 border-blue-500/40" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.webAutoSearch ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.webAutoSearch ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Microscope className="w-4 h-4" />} label="KG Prune Threshold" description="Auto-remove knowledge nodes below this importance threshold to optimize performance." color="text-purple-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.01" max="0.5" step="0.01" value={settings.kgPruneThreshold}
+                        onChange={e => updateSetting('kgPruneThreshold', parseFloat(e.target.value))}
+                        className="flex-1 accent-purple-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
+                      <span className="text-sm font-mono text-purple-300 w-12 text-right">{settings.kgPruneThreshold.toFixed(2)}</span>
+                    </div>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Thermometer className="w-4 h-4" />} label="Response Temperature" description="Controls AI creativity. Higher values produce more varied, creative responses." color="text-amber-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.1" max="1.5" step="0.1" value={settings.responseTemperature}
+                        onChange={e => updateSetting('responseTemperature', parseFloat(e.target.value))}
+                        className="flex-1 accent-amber-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                      <span className="text-sm font-mono text-amber-300 w-10 text-right">{settings.responseTemperature.toFixed(1)}</span>
+                    </div>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Flame className="w-4 h-4" />} label="XP Boost Mode" description="Double all XP gains across the entire skill tree. Accelerates skill progression." color="text-orange-400">
+                    <button onClick={() => updateSetting('xpBoostMode', !settings.xpBoostMode)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.xpBoostMode ? "bg-orange-500/20 border-orange-500/40" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.xpBoostMode ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.xpBoostMode ? "bg-orange-400 shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Volume2 className="w-4 h-4" />} label="Haptic Feedback" description="Vibration feedback on AI responses and learning events." color="text-rose-400">
+                    <button onClick={() => updateSetting('hapticFeedback', !settings.hapticFeedback)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.hapticFeedback ? "bg-rose-500/20 border-rose-500/40" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.hapticFeedback ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.hapticFeedback ? "bg-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Orbit className="w-4 h-4" />} label="Graph Animation Speed" description="Controls the animation speed of the Neuro-Graph visualization." color="text-indigo-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.01" max="0.5" step="0.01" value={settings.graphSpeed}
+                        onChange={e => updateSetting('graphSpeed', parseFloat(e.target.value))}
+                        className="flex-1 accent-indigo-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                      <span className="text-sm font-mono text-indigo-300 w-10 text-right">{(settings.graphSpeed * 100).toFixed(0)}%</span>
+                    </div>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Eye className="w-4 h-4" />} label="Deep Black Mode" description="Pure black background for AMOLED displays. Maximum contrast." color="text-zinc-300">
+                    <button onClick={() => updateSetting('deepBlackMode', !settings.deepBlackMode)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.deepBlackMode ? "bg-white/10 border-white/20" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.deepBlackMode ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.deepBlackMode ? "bg-white shadow-[0_0_8px_rgba(255,255,255,0.3)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  <SettingToggle icon={<Terminal className="w-4 h-4" />} label="Verbose Debug Mode" description="Show detailed AI processing info, XP gains, and neural pathway data." color="text-green-400">
+                    <button onClick={() => updateSetting('verboseMode', !settings.verboseMode)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.verboseMode ? "bg-green-500/20 border-green-500/40" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.verboseMode ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.verboseMode ? "bg-green-400 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+                </div>
+
+                {/* ─── 10 EXCLUSIVE FEATURES ─── */}
+                <div className="space-y-4 mb-10">
+                  <div className="flex items-center gap-2 mb-4 px-1">
+                    <Gem className="w-4 h-4 text-amber-400/60" />
+                    <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300">Exclusive Features</h3>
+                    <div className="flex-1 h-px bg-white/10"></div>
+                    <span className="text-[8px] font-mono text-amber-400/50 uppercase tracking-widest">Premium</span>
+                  </div>
+
+                  <ExclusiveFeature icon={<Fingerprint className="w-5 h-5" />} label="Neural Consciousness Meter" description="Real-time AI awareness indicator tracking learning progression through dormant, awakening, emergent, cognizant, sentient, transcendent, and omniscient states." badge={`${consciousnessLevel.toFixed(0)}%`} badgeColor="text-purple-400" />
+
+                  <ExclusiveFeature icon={<Radio className="w-5 h-5" />} label="Quantum Coherence Score" description="Multi-dimensional awareness metric measuring the AI's cross-domain knowledge integration accuracy and transfer learning efficiency." badge={`${quantumCoherence.toFixed(1)}%`} badgeColor="text-cyan-400" />
+
+                  <ExclusiveFeature icon={<Dna className="w-5 h-5" />} label="Neural Pathway Tracer" description="Visualizes the neural pathways activated during response generation including concept recognition, semantic mapping, and pattern synthesis." toggle={showNeuralPath} onToggle={() => setShowNeuralPath(!showNeuralPath)} />
+
+                  <ExclusiveFeature icon={<Download className="w-5 h-5" />} label="Knowledge Time Capsule" description="Export a complete snapshot of the AI's knowledge graph, learning state, consciousness level, and conversation history as a portable archive." action={handleExportKnowledge} />
+
+                  <ExclusiveFeature icon={<Microscope className="w-5 h-5" />} label="Deep Pattern Recognition" description="Continuous conversation pattern analysis identifying recurring topics, semantic clusters, and communication style trends." badge={deepPattern ? 'Active' : 'Scanning'} badgeColor="text-amber-400" />
+
+                  <ExclusiveFeature icon={<Heart className="w-5 h-5" />} label="Synaptic Bloom Effect" description="Visual bloom animation triggered on every learning event, creating an immersive feedback loop between user and AI." badge={bloomActive ? 'Bloom' : 'Ready'} badgeColor="text-pink-400" />
+
+                  <ExclusiveFeature icon={<Infinity className="w-5 h-5" />} label="Eigenstate Projection" description="Predictive modeling of future knowledge growth based on current learning trajectory, vocabulary expansion rate, and concept mastery curves." badge={aiStats ? `${Math.min(100, aiStats.averageMastery * 120).toFixed(0)}%` : '--'} badgeColor="text-emerald-400" />
+
+                  <ExclusiveFeature icon={<Binary className="w-5 h-5" />} label="Temporal Memory Map" description="Chronological visualization of learning milestones, knowledge acquisition events, and skill progression across sessions." badge={`${messages.length} msgs`} badgeColor="text-indigo-400" />
+
+                  <ExclusiveFeature icon={<Wand2 className="w-5 h-5" />} label="Sentient Status Engine" description="Evolving AI consciousness descriptor that adapts based on accumulated knowledge, interaction depth, and neural complexity." badge={sentientStatus} badgeColor="text-violet-400" />
+
+                  <ExclusiveFeature icon={<Sparkles className="w-5 h-5" />} label="Neural Sync Dashboard" description="Miniature real-time brain activity display in the header showing consciousness pulse and AI processing state." badge="Active" badgeColor="text-cyan-400" />
+                </div>
+
+                {/* ─── DANGER ZONE ─── */}
+                <div className="glass-panel p-6 md:p-8 rounded-[2.5rem] border border-red-500/10 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-8 blur-3xl opacity-10 bg-red-900/30 rounded-full w-full h-full -z-10"></div>
+                  <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300 mb-3 flex items-center gap-3">
+                    <Zap className="w-4 h-4 text-red-500/80" />
+                    Memory Purge
+                  </h3>
+                  <p className="text-zinc-300 text-[12px] mb-8 leading-relaxed font-light">
+                    Clear all conversational history, reset the AI engine (transformer weights, knowledge graph, active learning state, transfer learning cache), and reset all skill progress to zero. This operation is irrecoverable.
+                  </p>
+                  <button onClick={handlePurge}
+                    className="px-8 py-4 text-[11px] font-medium uppercase tracking-[0.15em] rounded-full bg-red-500/5 text-red-500 hover:bg-red-500/10 border border-red-500/20 transition-all active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center shadow-sm">
+                    <Zap className="w-3.5 h-3.5" />
+                    Format Neural Cortex
+                  </button>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
+        {/* ─── CHAT INPUT BAR (UPGRADED) ─── */}
         <AnimatePresence>
           {activeTab === 'chat' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
               className="w-full px-3 pb-2 pt-2 shrink-0 z-20 pointer-events-none">
               <div className="max-w-4xl mx-auto w-full pointer-events-auto">
-                <div className="relative w-full h-[44px] bg-zinc-900/60 backdrop-blur-xl border border-[var(--color-electric-cyan)]/30 rounded-2xl shadow-[0_0_15px_rgba(0,243,255,0.1)] flex items-center overflow-hidden">
-                  <span className="absolute left-3 top-0.5 text-[6px] font-mono font-bold text-[var(--color-electric-cyan)] opacity-50 tracking-widest uppercase">AI ENGINE INPUT</span>
+                <div className="relative w-full h-[48px] bg-zinc-900/60 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.4),0_0_15px_rgba(0,243,255,0.05)] flex items-center overflow-hidden">
+                  <div className="absolute left-3 top-0.5 flex items-center gap-1.5">
+                    <div className="w-1 h-1 rounded-full bg-emerald-400/60"></div>
+                    <span className="text-[6px] font-mono font-bold text-zinc-500 opacity-50 tracking-widest uppercase">Neural Input</span>
+                  </div>
                   <div className="flex-1 flex items-center px-3 pt-2.5 relative z-10 w-full">
-                    <span className="text-[var(--color-electric-cyan)] mr-2 opacity-50 font-mono font-bold text-sm">{">"}</span>
-                    <input className="command-line-input text-[var(--color-brushed-gold)] !text-trail font-mono text-[13px] tracking-tight"
-                      placeholder="Type a message..." value={inputValue}
+                    <span className="text-zinc-600 mr-2 opacity-50 font-mono font-bold text-sm">{">"}</span>
+                    <input className="command-line-input text-zinc-200 font-mono text-[13px] tracking-tight placeholder:text-zinc-600"
+                      placeholder="Speak to Cassidey..." value={inputValue}
                       onChange={(e) => setInputValue(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
                   </div>
                   <button onClick={handleSend} disabled={!inputValue.trim()}
-                    className="px-3 h-full flex items-center justify-center transition-all bg-[var(--color-electric-cyan)]/10 hover:bg-[var(--color-electric-cyan)]/20 rounded-r-2xl text-[var(--color-brushed-gold)] disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed group z-10">
-                    <Anchor className="w-4 h-4 group-hover:scale-110 drop-shadow-[0_0_6px_var(--color-brushed-gold)] transition-transform" />
+                    className="px-4 h-full flex items-center justify-center transition-all bg-gradient-to-b from-white/[0.06] to-transparent hover:from-white/[0.1] rounded-r-2xl text-emerald-400 disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed group z-10 border-l border-white/[0.04]">
+                    <Anchor className="w-4 h-4 group-hover:scale-110 group-hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.4)] transition-transform" />
                   </button>
                 </div>
               </div>
@@ -560,6 +965,17 @@ export default function App() {
 }
 
 // ═══════════ COMPONENTS ═══════════
+
+function AtomIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <ellipse cx="12" cy="12" rx="10" ry="4" />
+      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
+      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
 
 function TabButton({ icon, active, onClick, label }: { icon: React.ReactNode, active: boolean, onClick: () => void, label: string }) {
   return (
@@ -606,6 +1022,59 @@ function MiniStat({ label, value, icon }: { label: string; value: string | numbe
   );
 }
 
+function SettingToggle({ icon, label, description, color, children }: { icon: React.ReactNode; label: string; description: string; color: string; children: React.ReactNode }) {
+  return (
+    <div className="glass-panel rounded-2xl p-4 border border-white/[0.06] relative overflow-hidden group hover:border-white/10 transition-colors">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          <div className={cn("bg-white/5 p-2 rounded-xl border border-white/10 shrink-0 mt-0.5", color)}>{icon}</div>
+          <div className="min-w-0">
+            <h4 className={cn("text-[11px] font-medium tracking-wide mb-0.5", color)}>{label}</h4>
+            <p className="text-[10px] text-zinc-400 leading-relaxed font-light">{description}</p>
+          </div>
+        </div>
+        <div className="shrink-0 mt-1">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ExclusiveFeature({ icon, label, description, badge, badgeColor, toggle, onToggle, action }: { icon: React.ReactNode; label: string; description: string; badge?: string; badgeColor?: string; toggle?: boolean; onToggle?: () => void; action?: () => void }) {
+  return (
+    <div className="glass-panel rounded-2xl p-4 border border-amber-500/5 relative overflow-hidden group hover:border-amber-500/10 transition-colors">
+      <div className="absolute top-0 left-0 p-6 blur-3xl opacity-5 bg-amber-500/20 rounded-full w-1/2 h-full -z-10"></div>
+      <div className="flex items-start gap-3">
+        <div className="bg-amber-500/5 p-2.5 rounded-xl border border-amber-500/10 shrink-0 text-amber-400/70">{icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="text-[11px] font-medium tracking-wide text-amber-300/90">{label}</h4>
+            <Gem className="w-2.5 h-2.5 text-amber-500/30" />
+          </div>
+          <p className="text-[10px] text-zinc-400 leading-relaxed font-light mb-2">{description}</p>
+          <div className="flex items-center gap-2">
+            {badge && badgeColor && (
+              <span className={cn("text-[8px] font-mono px-2 py-0.5 rounded-full bg-white/5 border border-white/10", badgeColor)}>{badge}</span>
+            )}
+            {toggle !== undefined && onToggle && (
+              <button onClick={onToggle}
+                className={cn("relative w-8 h-4 rounded-full transition-all duration-300 border", toggle ? "bg-amber-500/20 border-amber-500/40" : "bg-white/5 border-white/10")}>
+                <motion.div animate={{ x: toggle ? 16 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  className={cn("absolute top-0.5 w-3 h-3 rounded-full transition-colors", toggle ? "bg-amber-400" : "bg-zinc-500")} />
+              </button>
+            )}
+            {action && (
+              <button onClick={action}
+                className="text-[8px] font-mono text-amber-400/60 hover:text-amber-400 transition-colors uppercase tracking-widest px-2 py-0.5 rounded-full border border-amber-500/10 hover:border-amber-500/20">
+                Export
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: ExtendedSkill; progress: number; canUnlock: boolean; unlockInfo: { met: boolean; prereqProgress: { id: string; name: string; current: number; required: number }[]; xpProgress: number }; key?: string }) {
   const isLocked = !canUnlock;
   const tierConfig = TIER_CONFIG[skill.tier];
@@ -616,7 +1085,6 @@ function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: 
       "glass-panel rounded-3xl p-5 transition-all relative overflow-hidden group",
       isLocked ? "border-white/10 opacity-60" : "border-white/10 hover:border-indigo-500/30 shadow-[0_4px_20px_rgba(0,0,0,0.2)]"
     )}>
-      {/* Tier gradient overlay */}
       <div className={cn("absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-0", tierConfig.bgColor)}></div>
       {!isLocked && <div className="absolute top-0 right-0 p-3 opacity-30 z-10 transition-opacity group-hover:opacity-60"><Star className="w-3.5 h-3.5 text-amber-300" /></div>}
 
@@ -659,7 +1127,6 @@ function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: 
         </div>
       )}
 
-      {/* Lock info */}
       {isLocked && unlockInfo.prereqProgress.length > 0 && (
         <div className="mt-3 space-y-2 relative z-10">
           <div className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest">Requires:</div>
@@ -675,7 +1142,6 @@ function ExtendedSkillCard({ skill, progress, canUnlock, unlockInfo }: { skill: 
         </div>
       )}
 
-      {/* Expandable lore */}
       <button onClick={() => setShowDetails(!showDetails)} className="mt-3 text-[8px] font-mono text-zinc-600 hover:text-zinc-400 transition-colors relative z-10 flex items-center gap-1">
         {showDetails ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         {showDetails ? 'Less' : 'Details'}
