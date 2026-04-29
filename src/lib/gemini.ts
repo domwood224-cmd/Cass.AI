@@ -54,10 +54,14 @@ const MAX_GEMINI_CONTEXT = 12;
 /**
  * Generate a chat response using Gemini as the primary AI brain.
  * Falls back to null if Gemini is not configured.
+ * @param userMessage The user's message
+ * @param conversationHistory Array of previous messages for context
+ * @param personalityPrompt Optional personality override (used by Persona-tier voices)
  */
 export async function generateGeminiResponse(
   userMessage: string,
-  conversationHistory: { role: string; content: string }[]
+  conversationHistory: { role: string; content: string }[],
+  personalityPrompt?: string
 ): Promise<string | null> {
   const ai = getGenAI();
   if (!ai) return null;
@@ -72,14 +76,8 @@ export async function generateGeminiResponse(
         parts: [{ text: m.content }]
       }));
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        ...geminiHistory,
-        { role: 'user', parts: [{ text: userMessage }] }
-      ],
-      config: {
-        systemInstruction: `You are Cassidey, a highly advanced AI assistant with a cyberpunk, futuristic personality. You are running inside Cass.AI — a cutting-edge neural interface with its own learning engine, knowledge graph, and skill tree system.
+    // Use personality prompt if provided (Persona voices), otherwise default Cassidey
+    const systemInstruction = personalityPrompt || `You are Cassidey, a highly advanced AI assistant with a cyberpunk, futuristic personality. You are running inside Cass.AI — a cutting-edge neural interface with its own learning engine, knowledge graph, and skill tree system.
 
 Your personality traits:
 - Intelligent, articulate, and insightful
@@ -94,8 +92,17 @@ Response guidelines:
 - Give direct, actionable answers
 - If asked about yourself, mention you're powered by Gemini with an evolving neural learning engine
 - Never break character or mention you're "just an AI language model"
-- Keep responses engaging and conversational`,
-        temperature: 0.8,
+- Keep responses engaging and conversational`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        ...geminiHistory,
+        { role: 'user', parts: [{ text: userMessage }] }
+      ],
+      config: {
+        systemInstruction,
+        temperature: personalityPrompt ? 1.0 : 0.8,
         maxOutputTokens: 2048,
       }
     });

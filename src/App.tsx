@@ -76,7 +76,7 @@ import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey, generateGeminiResponse } from './lib/gemini';
-import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID } from './lib/voice';
+import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt } from './lib/voice';
 import type { VoiceProfile } from './lib/voice';
 
 // Lazy-load the heavy 3D graph component
@@ -505,11 +505,14 @@ export default function App() {
     // ─── PRIMARY: Try Gemini first for intelligent responses ───
     if (hasGeminiApiKey()) {
       try {
-        const geminiResponse = await generateGeminiResponse(userMsg, messages);
+        const personality = isPersonaVoice(settings.voiceProfileId)
+          ? getVoicePersonalityPrompt(settings.voiceProfileId)
+          : undefined;
+        const geminiResponse = await generateGeminiResponse(userMsg, messages, personality);
         if (geminiResponse) {
           aiResponse = geminiResponse;
           usedGemini = true;
-          setWebStatus('Gemini powered');
+          setWebStatus(personality ? 'Persona active' : 'Gemini powered');
         }
       } catch (e) {
         console.log('Gemini generation failed, falling back:', e);
@@ -1464,13 +1467,13 @@ export default function App() {
 
                         {/* Voice grid */}
                         <div className="max-h-[300px] overflow-y-auto no-scrollbar space-y-2">
-                          {(['legendary', 'exclusive', 'premium', 'standard'] as const).map(tier => {
+                          {(['persona', 'legendary', 'exclusive', 'premium', 'standard'] as const).map(tier => {
                             const tierVoices = EXCLUSIVE_VOICES.filter(v => v.tier === tier);
                             const tc = VOICE_TIER_CONFIG[tier];
                             return (
                               <div key={tier}>
                                 <div className="flex items-center gap-2 mb-1.5 mt-2 first:mt-0">
-                                  <div className={cn("w-1.5 h-1.5 rounded-full", tier === 'legendary' ? 'bg-amber-400' : tier === 'exclusive' ? 'bg-purple-400' : tier === 'premium' ? 'bg-cyan-400' : 'bg-zinc-400')}></div>
+                                  <div className={cn("w-1.5 h-1.5 rounded-full", tier === 'persona' ? 'bg-rose-400' : tier === 'legendary' ? 'bg-amber-400' : tier === 'exclusive' ? 'bg-purple-400' : tier === 'premium' ? 'bg-cyan-400' : 'bg-zinc-400')}></div>
                                   <span className={cn("text-[8px] font-mono uppercase tracking-widest", tc.color)}>{tc.label} ({tierVoices.length})</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5">
@@ -1480,13 +1483,18 @@ export default function App() {
                                       disabled={!settings.voiceEnabled}
                                       className={cn("flex items-center gap-2 px-3 py-2 rounded-lg border transition-all text-left disabled:opacity-40",
                                         settings.voiceProfileId === voice.id
-                                          ? "bg-amber-500/10 border-amber-500/30 text-zinc-100"
+                                          ? tier === 'persona'
+                                            ? "bg-rose-500/10 border-rose-500/30 text-zinc-100"
+                                            : "bg-amber-500/10 border-amber-500/30 text-zinc-100"
                                           : "bg-white/[0.02] border-white/10 text-zinc-400 hover:bg-white/5 hover:border-white/20"
                                       )}>
-                                      <Volume2 className={cn("w-3 h-3 shrink-0", settings.voiceProfileId === voice.id ? "text-amber-400" : "text-zinc-500")} />
+                                      <Volume2 className={cn("w-3 h-3 shrink-0", settings.voiceProfileId === voice.id ? (tier === 'persona' ? "text-rose-400" : "text-amber-400") : "text-zinc-500")} />
                                       <div className="min-w-0">
-                                        <div className={cn("text-[10px] font-medium truncate", settings.voiceProfileId === voice.id ? "text-amber-300" : "text-zinc-300")}>{voice.name}</div>
-                                        <div className="text-[8px] text-zinc-500 truncate">{voice.style}</div>
+                                        <div className={cn("text-[10px] font-medium truncate", settings.voiceProfileId === voice.id ? (tier === 'persona' ? "text-rose-300" : "text-amber-300") : "text-zinc-300")}>
+                                          {voice.name}
+                                          {tier === 'persona' && <span className="ml-1 text-[7px] text-rose-400/60">★</span>}
+                                        </div>
+                                        <div className="text-[8px] text-zinc-500 truncate">{tier === 'persona' ? 'IN-CHARACTER' : voice.style}</div>
                                       </div>
                                     </button>
                                   ))}
