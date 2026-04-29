@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Brain,
   Code,
-  Terminal,
+  TerminalSquare,
   Github,
   FileText,
   Youtube,
@@ -71,7 +71,6 @@ import { cn } from './lib/utils';
 import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
-import { LinuxTerminal } from './components/LinuxTerminal';
 import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey } from './lib/gemini';
 
 // Lazy-load the heavy 3D graph component
@@ -133,7 +132,7 @@ function learningTypeToSkillCategories(type: LearningType): SkillCategory[] {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'terminal' | 'settings'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'skills' | 'brain' | 'graph' | 'settings'>('chat');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant', content: string; timestamp: number }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -971,7 +970,7 @@ export default function App() {
 
                       {/* Stats Row */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                        <MiniStat label="Vocabulary" value={aiStats.transformerVocabSize} icon={<Terminal className="w-3 h-3" />} />
+                        <MiniStat label="Vocabulary" value={aiStats.transformerVocabSize} icon={<TerminalSquare className="w-3 h-3" />} />
                         <MiniStat label="Cache Size" value={aiStats.attentionCacheSize} icon={<Database className="w-3 h-3" />} />
                         <MiniStat label="Strategy" value={aiStats.activeLearningStrategy.replace('_', ' ')} icon={<Shield className="w-3 h-3" />} />
                         <MiniStat label="Efficiency" value={aiStats.learningEfficiency.toFixed(6)} icon={<Activity className="w-3 h-3" />} />
@@ -1079,14 +1078,6 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* ═══════════ TERMINAL TAB ═══════════ */}
-            {activeTab === 'terminal' && (
-              <motion.div key="terminal" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.3 }} className="w-full flex flex-col pt-12">
-                <LinuxTerminal />
-              </motion.div>
-            )}
-
             {/* ═══════════ SETTINGS TAB ═══════════ */}
             {activeTab === 'settings' && (
               <motion.div key="settings" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
@@ -1189,7 +1180,7 @@ export default function App() {
                     </button>
                   </SettingToggle>
 
-                  <SettingToggle icon={<Terminal className="w-4 h-4" />} label="Verbose Debug Mode" description="Show detailed AI processing info, XP gains, and neural pathway data." color="text-green-400">
+                  <SettingToggle icon={<TerminalSquare className="w-4 h-4" />} label="Verbose Debug Mode" description="Show detailed AI processing info, XP gains, and neural pathway data." color="text-green-400">
                     <button onClick={() => updateSetting('verboseMode', !settings.verboseMode)}
                       className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.verboseMode ? "bg-green-500/20 border-green-500/40" : "bg-white/5 border-white/10")}>
                       <motion.div animate={{ x: settings.verboseMode ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
@@ -1340,7 +1331,6 @@ export default function App() {
 
       <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
-        <TabButton icon={<Terminal className="w-5 h-5" />} active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} label="Terminal" />
         <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />
         <TabButton icon={<Orbit className="w-5 h-5" />} active={activeTab === 'graph'} onClick={() => setActiveTab('graph')} label="Graph" />
         <TabButton icon={<Settings className="w-5 h-5" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
@@ -1546,7 +1536,7 @@ function SkillCategoryIcon({ category, className }: { category: SkillCategory, c
   switch (category) {
     case SkillCategory.AI_LEARNING: return <Brain className={className} />;
     case SkillCategory.CODING: return <Code className={className} />;
-    case SkillCategory.TERMUX: return <Terminal className={className} />;
+    case SkillCategory.TERMUX: return <TerminalSquare className={className} />;
     case SkillCategory.GITHUB: return <Github className={className} />;
     case SkillCategory.PDF_ANALYSIS: return <FileText className={className} />;
     case SkillCategory.YOUTUBE_LEARNING: return <Youtube className={className} />;

@@ -17,8 +17,6 @@
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
     "d3": "^7.9.0",
     "dotenv": "^17.2.3",
