@@ -39,6 +39,7 @@ import {
   Microscope,
   Wand2,
   Volume2,
+  VolumeX,
   Gauge,
   Timer,
   Copy,
@@ -58,6 +59,9 @@ import {
   Plus,
   Trash2,
   Key,
+  Mic,
+  MicOff,
+  Speaker,
   type LucideIcon
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
@@ -71,7 +75,9 @@ import { cn } from './lib/utils';
 import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
-import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey } from './lib/gemini';
+import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey, generateGeminiResponse } from './lib/gemini';
+import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID } from './lib/voice';
+import type { VoiceProfile } from './lib/voice';
 
 // Lazy-load the heavy 3D graph component
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
@@ -88,6 +94,11 @@ interface AdvancedSettings {
   graphSpeed: number;
   deepBlackMode: boolean;
   verboseMode: boolean;
+  voiceEnabled: boolean;
+  autoSpeak: boolean;
+  voiceProfileId: string;
+  voiceSpeed: number;
+  voicePitch: number;
 }
 
 const DEFAULT_SETTINGS: AdvancedSettings = {
@@ -101,6 +112,11 @@ const DEFAULT_SETTINGS: AdvancedSettings = {
   graphSpeed: 0.11,
   deepBlackMode: false,
   verboseMode: false,
+  voiceEnabled: true,
+  autoSpeak: false,
+  voiceProfileId: DEFAULT_VOICE_ID,
+  voiceSpeed: 1.0,
+  voicePitch: 1.0,
 };
 
 function GraphLoadingFallback() {
@@ -178,6 +194,11 @@ export default function App() {
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiKeySaved, setGeminiKeySaved] = useState(false);
 
+  // Voice / TTS state
+  const [isSpeakingState, setIsSpeakingState] = useState(false);
+  const [speakingMsgIdx, setSpeakingMsgIdx] = useState<number | null>(null);
+  const [voiceSelectorOpen, setVoiceSelectorOpen] = useState(false);
+
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
       const n = (window as any).__CASSIDEY_NATIVE__;
@@ -235,6 +256,33 @@ export default function App() {
       writeJson('cassidey_settings.json', settings).catch(console.error);
     }
   }, [settings, settingsLoaded]);
+
+  // Poll speaking state for UI updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsSpeakingState(getIsSpeaking());
+    }, 300);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Cleanup speech on unmount
+  useEffect(() => {
+    return () => { stopSpeech(); };
+  }, []);
+
+  const handleSpeakMessage = useCallback((text: string, idx: number) => {
+    if (speakingMsgIdx === idx && isSpeakingState) {
+      stopSpeech();
+      setSpeakingMsgIdx(null);
+      return;
+    }
+    stopSpeech();
+    setSpeakingMsgIdx(idx);
+    speak(text, settings.voiceProfileId, () => {
+      setSpeakingMsgIdx(null);
+      setIsSpeakingState(false);
+    });
+  }, [speakingMsgIdx, isSpeakingState, settings.voiceProfileId]);
 
   useEffect(() => {
     if (messages.length > 0 || ready) {
@@ -452,54 +500,87 @@ export default function App() {
 
     let aiResponse: string;
     let webSearchPerformed = false;
+    let usedGemini = false;
 
+    // ─── PRIMARY: Try Gemini first for intelligent responses ───
+    if (hasGeminiApiKey()) {
+      try {
+        const geminiResponse = await generateGeminiResponse(userMsg, messages);
+        if (geminiResponse) {
+          aiResponse = geminiResponse;
+          usedGemini = true;
+          setWebStatus('Gemini powered');
+        }
+      } catch (e) {
+        console.log('Gemini generation failed, falling back:', e);
+      }
+    }
+
+    // ─── FALLBACK: Local AI engine ───
+    if (!usedGemini) {
+      try {
+        if (settings.webAutoSearch) {
+          const webContext = await aiEngine.processWithWebLearning(userMsg, recentContext);
+          if (webContext.priorKnowledge) {
+            setWebStatus('Recalled prior knowledge');
+          }
+          if (webContext.shouldSearch && webContext.searchResult) {
+            webSearchPerformed = true;
+            setWebStatus(`Searched web: learned ${webContext.searchResult.learnedFacts.length} facts`);
+          }
+        }
+      } catch (e) {
+        console.log('Web learning check skipped:', e);
+      }
+
+      aiResponse = aiEngine.generateResponse(userMsg);
+
+      if (webSearchPerformed) {
+        const webLearner = aiEngine.getWebLearner();
+        const enhanced = webLearner.enhanceResponse(aiResponse, userMsg);
+        if (enhanced !== aiResponse) {
+          aiResponse = enhanced;
+        }
+      }
+    }
+
+    // ─── BACKGROUND LEARNING: Always process through local AI engine ───
     try {
-      if (settings.webAutoSearch) {
-        const webContext = await aiEngine.processWithWebLearning(userMsg, recentContext);
-        if (webContext.priorKnowledge) {
-          setWebStatus('Recalled prior knowledge');
-        }
-        if (webContext.shouldSearch && webContext.searchResult) {
-          webSearchPerformed = true;
-          setWebStatus(`Searched web: learned ${webContext.searchResult.learnedFacts.length} facts`);
-        }
+      const result = await aiEngine.processAndLearn(userMsg, aiResponse, recentContext);
+
+      const categories = learningTypeToSkillCategories(result.type);
+      const relevantSkills = skills.filter(s => {
+        const isUnlocked = skillManager.canUnlock(s.id);
+        const categoryMatch = categories.includes(s.category);
+        return isUnlocked && (categoryMatch || Math.random() > 0.7);
+      });
+
+      const webBonus = webSearchPerformed ? 200 : 0;
+      const xpMultiplier = settings.xpBoostMode ? 2 : 1;
+
+      for (const skill of relevantSkills) {
+        skillManager.addXp(skill.id, (result.skillXpReward + webBonus) * xpMultiplier);
       }
+
+      await skillManager.saveLocalProgress();
+      await aiEngine.saveLocalProgress();
+      setAiStats(aiEngine.getStats());
+      setSkills(skillManager.getAllSkills());
+      setLastLearningInfo(result.learnedKnowledge);
     } catch (e) {
-      console.log('Web learning check skipped:', e);
+      console.log('Background learning failed:', e);
     }
 
-    aiResponse = aiEngine.generateResponse(userMsg);
-
-    if (webSearchPerformed) {
-      const webLearner = aiEngine.getWebLearner();
-      const enhanced = webLearner.enhanceResponse(aiResponse, userMsg);
-      if (enhanced !== aiResponse) {
-        aiResponse = enhanced;
-      }
-    }
-
-    const result = await aiEngine.processAndLearn(userMsg, aiResponse, recentContext);
-
-    const categories = learningTypeToSkillCategories(result.type);
-    const relevantSkills = skills.filter(s => {
-      const isUnlocked = skillManager.canUnlock(s.id);
-      const categoryMatch = categories.includes(s.category);
-      return isUnlocked && (categoryMatch || Math.random() > 0.7);
-    });
-
-    const webBonus = webSearchPerformed ? 200 : 0;
-    const xpMultiplier = settings.xpBoostMode ? 2 : 1;
-
-    for (const skill of relevantSkills) {
-      skillManager.addXp(skill.id, (result.skillXpReward + webBonus) * xpMultiplier);
-    }
-
-    await skillManager.saveLocalProgress();
-    await aiEngine.saveLocalProgress();
+    // ─── Add response and trigger auto-speak ───
     setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
-    setAiStats(aiEngine.getStats());
-    setSkills(skillManager.getAllSkills());
-    setLastLearningInfo(result.learnedKnowledge);
+
+    // Auto-speak if enabled
+    if (settings.voiceEnabled && settings.autoSpeak && isSpeechAvailable()) {
+      setTimeout(() => {
+        speak(aiResponse, settings.voiceProfileId);
+      }, 500);
+    }
+
     setIsTyping(false);
   };
 
@@ -614,7 +695,7 @@ export default function App() {
                       <div className="space-y-3">
                         <h2 className="text-xl md:text-3xl font-display text-[var(--color-electric-cyan)] tracking-[0.3em] font-medium uppercase drop-shadow-md">Neural Engine Active</h2>
                         <p className="text-[var(--color-electric-cyan)] text-[9px] tracking-[0.2em] font-mono mx-auto leading-relaxed uppercase opacity-70">
-                          AI Engine + Web Learning + Knowledge Graph + Transformer Attention
+                          Gemini AI + Neural Learning Engine + Knowledge Graph + Voice System
                         </p>
                         {/* Exclusive: Consciousness Level */}
                         <div className="flex items-center justify-center gap-3 mt-4">
@@ -664,18 +745,29 @@ export default function App() {
                             <div className="flex items-center gap-2 mb-1.5 px-1">
                               <div className="flex items-center gap-1.5">
                                 <div className="w-4 h-4 rounded-full bg-gradient-to-br from-violet-500/30 to-cyan-500/20 border border-violet-500/20 flex items-center justify-center">
-                                  <div className="w-1 h-1 rounded-full bg-violet-400 shadow-[0_0_4px_rgba(138,43,226,0.6)]"></div>
+                                  <div className={cn("w-1 h-1 rounded-full", speakingMsgIdx === i && isSpeakingState ? "bg-amber-400 animate-[pulse_1s_ease-in-out_infinite]" : "bg-violet-400")} style={speakingMsgIdx === i && isSpeakingState ? { boxShadow: '0 0 6px rgba(245,158,11,0.8)' } : { boxShadow: '0 0 4px rgba(138,43,226,0.6)' }}></div>
                                 </div>
                                 <span className="font-display font-bold text-violet-400/70 text-[7px] uppercase tracking-[0.15em]">Cassidey</span>
                               </div>
                               <div className="h-px flex-1 bg-gradient-to-r from-violet-500/10 to-transparent"></div>
-                              <button onClick={() => handleCopy(m.content, i)} className="opacity-0 group-hover:opacity-60 transition-opacity p-1 rounded-lg hover:bg-white/5">
-                                {copiedIdx === i ? (
-                                  <span className="text-[8px] font-mono text-emerald-400">Copied</span>
-                                ) : (
-                                  <Copy className="w-3 h-3 text-zinc-500" />
+                              <div className="flex items-center gap-0.5">
+                                {settings.voiceEnabled && isSpeechAvailable() && (
+                                  <button onClick={() => handleSpeakMessage(m.content, i)} className="opacity-0 group-hover:opacity-60 transition-opacity p-1 rounded-lg hover:bg-white/5">
+                                    {speakingMsgIdx === i && isSpeakingState ? (
+                                      <VolumeX className="w-3 h-3 text-amber-400" />
+                                    ) : (
+                                      <Volume2 className="w-3 h-3 text-zinc-500" />
+                                    )}
+                                  </button>
                                 )}
-                              </button>
+                                <button onClick={() => handleCopy(m.content, i)} className="opacity-0 group-hover:opacity-60 transition-opacity p-1 rounded-lg hover:bg-white/5">
+                                  {copiedIdx === i ? (
+                                    <span className="text-[8px] font-mono text-emerald-400">Copied</span>
+                                  ) : (
+                                    <Copy className="w-3 h-3 text-zinc-500" />
+                                  )}
+                                </button>
+                              </div>
                             </div>
                             {/* AI response body */}
                             <div className="text-[13px] md:text-sm text-zinc-200 font-sans font-light tracking-wide leading-[1.8] relative px-4 py-3 rounded-2xl bg-gradient-to-br from-zinc-900/40 to-zinc-900/20 border border-white/[0.04] backdrop-blur-sm shadow-[0_2px_20px_rgba(0,0,0,0.2)]">
@@ -1237,7 +1329,7 @@ export default function App() {
                           Gemini API Key
                         </h4>
                         <p className="text-zinc-400 text-[10px] mt-1 leading-relaxed">
-                          Powers web learning, knowledge extraction, and training coaching. Required for autonomous study agent web search.
+                          Powers Cassidey as the primary AI brain. Also drives web learning, knowledge extraction, and autonomous study agent.
                         </p>
                       </div>
                       <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[8px] font-mono uppercase tracking-widest border", geminiKeySaved ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-zinc-500/10 border-zinc-500/20 text-zinc-500")}>
@@ -1277,6 +1369,135 @@ export default function App() {
                       </p>
                     )}
                   </div>
+                </div>
+
+                {/* ─── VOICE SYSTEM ─── */}
+                <div className="space-y-4 mb-10">
+                  <div className="flex items-center gap-2 mb-4 px-1">
+                    <Mic className="w-4 h-4 text-amber-400/60" />
+                    <h3 className="text-[11px] font-medium tracking-[0.2em] uppercase text-zinc-300">Voice System</h3>
+                    <div className="flex-1 h-px bg-white/10"></div>
+                    <span className="text-[8px] font-mono text-amber-400/50 uppercase tracking-widest">{EXCLUSIVE_VOICES.length} Voices</span>
+                  </div>
+
+                  {/* Master Voice Toggle */}
+                  <SettingToggle icon={settings.voiceEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />} label="Voice Output" description="Enable text-to-speech to give Cassidey a voice. Uses the Web Speech API for on-device synthesis." color="text-amber-400">
+                    <button onClick={() => updateSetting('voiceEnabled', !settings.voiceEnabled)}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.voiceEnabled ? "bg-amber-500/20 border-amber-500/40" : "bg-white/5 border-white/10")}>
+                      <motion.div animate={{ x: settings.voiceEnabled ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.voiceEnabled ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  {/* Auto-Speak Toggle */}
+                  <SettingToggle icon={<Speaker className="w-4 h-4" />} label="Auto-Speak Responses" description="Automatically read every AI response aloud. Toggle off to use the speak button on individual messages." color="text-amber-300">
+                    <button onClick={() => { updateSetting('autoSpeak', !settings.autoSpeak); if (settings.autoSpeak) stopSpeech(); }}
+                      disabled={!settings.voiceEnabled || !isSpeechAvailable()}
+                      className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.autoSpeak && settings.voiceEnabled ? "bg-amber-500/20 border-amber-500/40" : "bg-white/5 border-white/10", (!settings.voiceEnabled || !isSpeechAvailable()) && "opacity-30 cursor-not-allowed")}>
+                      <motion.div animate={{ x: settings.autoSpeak && settings.voiceEnabled ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        className={cn("absolute top-0.5 w-4 h-4 rounded-full transition-colors", settings.autoSpeak && settings.voiceEnabled ? "bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.5)]" : "bg-zinc-500")} />
+                    </button>
+                  </SettingToggle>
+
+                  {/* Voice Speed */}
+                  <SettingToggle icon={<Timer className="w-4 h-4" />} label="Voice Speed" description="Adjust how fast Cassidey speaks. Lower values create a more relaxed delivery." color="text-amber-200">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.5" max="1.5" step="0.1" value={settings.voiceSpeed}
+                        onChange={e => updateSetting('voiceSpeed', parseFloat(e.target.value))}
+                        disabled={!settings.voiceEnabled}
+                        className="flex-1 accent-amber-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                      <span className="text-sm font-mono text-amber-200 w-10 text-right">{settings.voiceSpeed.toFixed(1)}x</span>
+                    </div>
+                  </SettingToggle>
+
+                  {/* Voice Pitch */}
+                  <SettingToggle icon={<Radio className="w-4 h-4" />} label="Voice Pitch" description="Adjust the pitch of the voice. Higher values sound brighter, lower values sound deeper." color="text-orange-400">
+                    <div className="flex items-center gap-3 w-full">
+                      <input type="range" min="0.5" max="1.5" step="0.1" value={settings.voicePitch}
+                        onChange={e => updateSetting('voicePitch', parseFloat(e.target.value))}
+                        disabled={!settings.voiceEnabled}
+                        className="flex-1 accent-orange-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-orange-400 [&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
+                      <span className="text-sm font-mono text-orange-300 w-10 text-right">{settings.voicePitch.toFixed(1)}</span>
+                    </div>
+                  </SettingToggle>
+
+                  {/* Voice Selector - Current Voice Display */}
+                  {(() => {
+                    const currentVoice = getVoiceProfile(settings.voiceProfileId);
+                    return (
+                      <div className="glass-panel p-5 rounded-2xl border border-amber-500/10 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-8 blur-3xl opacity-5 bg-amber-600/40 rounded-full w-full h-full -z-10"></div>
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <h4 className="text-[11px] font-medium tracking-[0.15em] uppercase text-amber-400/80 flex items-center gap-2">
+                              <Volume2 className="w-3.5 h-3.5" />
+                              Voice Profile
+                            </h4>
+                            <p className="text-zinc-400 text-[10px] mt-1 leading-relaxed">
+                              Choose from {EXCLUSIVE_VOICES.length} exclusive voices. Each has a unique personality.
+                            </p>
+                          </div>
+                          <span className={cn("text-[8px] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full border", VOICE_TIER_CONFIG[currentVoice.tier].bgColor, VOICE_TIER_CONFIG[currentVoice.tier].borderColor, VOICE_TIER_CONFIG[currentVoice.tier].color)}>
+                            {VOICE_TIER_CONFIG[currentVoice.tier].label}
+                          </span>
+                        </div>
+
+                        {/* Current voice info */}
+                        <div className="flex items-center gap-3 mb-4 p-3 bg-white/5 rounded-xl border border-white/10">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500/20 to-purple-500/10 border border-amber-500/20 flex items-center justify-center">
+                            <Volume2 className="w-4 h-4 text-amber-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-zinc-100 tracking-wide">{currentVoice.name}</div>
+                            <div className="text-[10px] text-zinc-400 truncate">{currentVoice.description}</div>
+                          </div>
+                          <button onClick={() => { speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId); }}
+                            disabled={!isSpeechAvailable() || isSpeakingState}
+                            className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 text-[9px] font-medium uppercase tracking-widest border border-amber-500/20 hover:bg-amber-500/20 disabled:opacity-30 transition-all flex items-center gap-1.5">
+                            {isSpeakingState && speakingMsgIdx !== null ? (
+                              <><VolumeX className="w-3 h-3" /> Stop</>
+                            ) : (
+                              <><Play className="w-3 h-3" /> Test</>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Voice grid */}
+                        <div className="max-h-[300px] overflow-y-auto no-scrollbar space-y-2">
+                          {(['legendary', 'exclusive', 'premium', 'standard'] as const).map(tier => {
+                            const tierVoices = EXCLUSIVE_VOICES.filter(v => v.tier === tier);
+                            const tc = VOICE_TIER_CONFIG[tier];
+                            return (
+                              <div key={tier}>
+                                <div className="flex items-center gap-2 mb-1.5 mt-2 first:mt-0">
+                                  <div className={cn("w-1.5 h-1.5 rounded-full", tier === 'legendary' ? 'bg-amber-400' : tier === 'exclusive' ? 'bg-purple-400' : tier === 'premium' ? 'bg-cyan-400' : 'bg-zinc-400')}></div>
+                                  <span className={cn("text-[8px] font-mono uppercase tracking-widest", tc.color)}>{tc.label} ({tierVoices.length})</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  {tierVoices.map(voice => (
+                                    <button key={voice.id}
+                                      onClick={() => updateSetting('voiceProfileId', voice.id)}
+                                      disabled={!settings.voiceEnabled}
+                                      className={cn("flex items-center gap-2 px-3 py-2 rounded-lg border transition-all text-left disabled:opacity-40",
+                                        settings.voiceProfileId === voice.id
+                                          ? "bg-amber-500/10 border-amber-500/30 text-zinc-100"
+                                          : "bg-white/[0.02] border-white/10 text-zinc-400 hover:bg-white/5 hover:border-white/20"
+                                      )}>
+                                      <Volume2 className={cn("w-3 h-3 shrink-0", settings.voiceProfileId === voice.id ? "text-amber-400" : "text-zinc-500")} />
+                                      <div className="min-w-0">
+                                        <div className={cn("text-[10px] font-medium truncate", settings.voiceProfileId === voice.id ? "text-amber-300" : "text-zinc-300")}>{voice.name}</div>
+                                        <div className="text-[8px] text-zinc-500 truncate">{voice.style}</div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ─── DANGER ZONE ─── */}

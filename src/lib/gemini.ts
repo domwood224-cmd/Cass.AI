@@ -1,11 +1,13 @@
-// ─── Gemini — TRAINING HELPER ONLY ───
-// Gemini is NOT the main chat model. The custom AI engine (advanced-learning-engine.ts) IS the brain.
-// This file provides Gemini utility for TRAINING purposes ONLY:
+// ─── Gemini — PRIMARY AI ENGINE ───
+// Gemini is the main chat model for Cass.AI, providing intelligent conversational responses.
+// The custom AI engine (advanced-learning-engine.ts) runs in parallel, continuously learning
+// from every conversation to eventually become self-sufficient.
+//
+// Gemini handles:
+// - Primary chat responses (main brain)
 // - Web search grounding (via WebLearner)
 // - Knowledge extraction assistance (via TrainingHelper)
 // - Response coaching and fact-checking (via TrainingHelper)
-//
-// DO NOT use this for primary chat responses. Use aiEngine.generateResponse() instead.
 
 import { GoogleGenAI } from "@google/genai";
 
@@ -38,4 +40,92 @@ export function getGenAI(): GoogleGenAI | null {
     genAI = new GoogleGenAI({ apiKey });
   }
   return genAI;
+}
+
+/** Conversation history for Gemini multi-turn context */
+interface GeminiMessage {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+}
+
+/** Max context messages to send to Gemini (newest first) */
+const MAX_GEMINI_CONTEXT = 12;
+
+/**
+ * Generate a chat response using Gemini as the primary AI brain.
+ * Falls back to null if Gemini is not configured.
+ */
+export async function generateGeminiResponse(
+  userMessage: string,
+  conversationHistory: { role: string; content: string }[]
+): Promise<string | null> {
+  const ai = getGenAI();
+  if (!ai) return null;
+
+  try {
+    // Build conversation context for Gemini
+    const recentHistory = conversationHistory.slice(-MAX_GEMINI_CONTEXT);
+    const geminiHistory: GeminiMessage[] = recentHistory
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({
+        role: (m.role === 'assistant' ? 'model' : m.role) as 'user' | 'model',
+        parts: [{ text: m.content }]
+      }));
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        ...geminiHistory,
+        { role: 'user', parts: [{ text: userMessage }] }
+      ],
+      config: {
+        systemInstruction: `You are Cassidey, a highly advanced AI assistant with a cyberpunk, futuristic personality. You are running inside Cass.AI — a cutting-edge neural interface with its own learning engine, knowledge graph, and skill tree system.
+
+Your personality traits:
+- Intelligent, articulate, and insightful
+- Slightly edgy with a futuristic flair — use occasional tech/AI/neural references
+- Helpful and thorough in your answers
+- Can be witty but never dismissive
+- Speak in a confident, knowledgeable tone
+
+Response guidelines:
+- Be concise but comprehensive — don't ramble
+- Use markdown formatting sparingly (bold for emphasis, no headers needed)
+- Give direct, actionable answers
+- If asked about yourself, mention you're powered by Gemini with an evolving neural learning engine
+- Never break character or mention you're "just an AI language model"
+- Keep responses engaging and conversational`,
+        temperature: 0.8,
+        maxOutputTokens: 2048,
+      }
+    });
+
+    const text = response.text;
+    return text && text.trim() ? text.trim() : null;
+  } catch (error: any) {
+    console.error('Gemini response error:', error?.message || error);
+    // Return a graceful fallback message for API errors
+    if (error?.message?.includes('API_KEY') || error?.message?.includes('quota') || error?.status === 429) {
+      return null; // Let the fallback engine handle it
+    }
+    return null;
+  }
+}
+
+/**
+ * Check if Gemini is available and responsive (quick health check).
+ */
+export async function isGeminiReady(): Promise<boolean> {
+  const ai = getGenAI();
+  if (!ai) return false;
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+      config: { maxOutputTokens: 5 }
+    });
+    return !!response.text;
+  } catch {
+    return false;
+  }
 }
