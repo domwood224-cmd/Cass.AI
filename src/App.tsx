@@ -209,9 +209,12 @@ export default function App() {
   const [callMessages, setCallMessages] = useState<{ role: string; content: string }[]>([]);
   const [callAiResponse, setCallAiResponse] = useState('');
   const [callIsSpeaking, setCallIsSpeaking] = useState(false);
+  const [callError, setCallError] = useState('');
   const recognitionRef = useRef<any>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callMessagesRef = useRef<{ role: string; content: string }[]>([]);
+  const listeningDesiredRef = useRef(false); // tracks if user wants listening active
+  const speakingDoneRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
@@ -299,13 +302,119 @@ export default function App() {
   }, [speakingMsgIdx, isSpeakingState, settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch]);
 
   // ─── Voice Call Functions ───
+
+  // Forward-declare stable refs for cross-referencing
+  const startRecognitionRef = useRef<() => void>(() => {});
+  const processCallMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
+
+  const stopRecognition = useCallback(() => {
+    listeningDesiredRef.current = false;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+  }, []);
+
+  // Helper: start or restart speech recognition
+  const startRecognition = useCallback(() => {
+    // Stop existing recognition first
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setCallError('Speech recognition not available on this device');
+      setIsListening(false);
+      listeningDesiredRef.current = false;
+      return;
+    }
+
+    try {
+      const recognition = new SR();
+      recognition.continuous = true;          // BUG FIX: was false — kept stopping after first sentence
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setCallError('');
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = '', final = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) final += event.results[i][0].transcript;
+          else interim += event.results[i][0].transcript;
+        }
+        setCallTranscript(interim || final);
+        if (final.trim()) {
+          // Stop listening while AI processes — avoids recognition/synthesis conflict
+          try { recognition.stop(); } catch {}
+          processCallMessageRef.current(final.trim());
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('[Call] Recognition error:', event.error, event.message);
+        setIsListening(false);
+
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          setCallError('Microphone permission denied. Please allow mic access in Settings.');
+          listeningDesiredRef.current = false;
+        } else if (event.error === 'no-speech') {
+          // Silent — no speech detected, auto-restart if desired
+          if (listeningDesiredRef.current) {
+            setTimeout(() => startRecognitionRef.current(), 300);
+          }
+        } else if (event.error === 'aborted') {
+          // Normal — we called stop() ourselves, or AI is speaking
+        } else {
+          setCallError(`Mic error: ${event.error}. Tap mic to retry.`);
+          // Auto-retry for transient errors
+          if (listeningDesiredRef.current) {
+            setTimeout(() => startRecognitionRef.current(), 1000);
+          }
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        // BUG FIX: auto-restart if call is active and user still wants to listen
+        if (listeningDesiredRef.current && !callIsSpeaking) {
+          setTimeout(() => {
+            if (listeningDesiredRef.current) startRecognitionRef.current();
+          }, 200);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.error('[Call] Failed to start recognition:', e);
+      setCallError('Failed to start microphone. Tap mic to retry.');
+      setIsListening(false);
+    }
+  }, [callIsSpeaking, stopRecognition]);
+
+  // Keep ref in sync
+  useEffect(() => { startRecognitionRef.current = startRecognition; }, [startRecognition]);
+
+  // Keep callMessagesRef in sync
   useEffect(() => {
     callMessagesRef.current = callMessages;
   }, [callMessages]);
 
   const processCallMessage = useCallback(async (text: string) => {
-    const history = [...callMessagesRef.current, { role: 'user', content: text }];
-    setCallMessages(history);
+    // BUG FIX: update ref immediately to prevent race condition on rapid speech
+    const userMsg = { role: 'user' as const, content: text };
+    const updatedMessages = [...callMessagesRef.current, userMsg];
+    callMessagesRef.current = updatedMessages; // update ref NOW, not after render
+
+    setCallMessages(updatedMessages);
     setCallTranscript('');
     setCallAiResponse('...');
 
@@ -315,7 +424,7 @@ export default function App() {
         ? getVoicePersonalityPrompt(settings.voiceProfileId)
         : undefined;
       try {
-        const geminiResp = await generateGeminiResponse(text, history, personality);
+        const geminiResp = await generateGeminiResponse(text, updatedMessages, personality);
         response = geminiResp || aiEngine.generateResponse(text);
       } catch {
         response = aiEngine.generateResponse(text);
@@ -324,11 +433,29 @@ export default function App() {
       response = aiEngine.generateResponse(text);
     }
 
-    setCallMessages(prev => [...prev, { role: 'assistant', content: response }]);
+    // Update ref immediately
+    const withResponse = [...callMessagesRef.current, { role: 'assistant' as const, content: response }];
+    callMessagesRef.current = withResponse;
+
+    setCallMessages(withResponse);
     setCallAiResponse(response);
     setCallIsSpeaking(true);
-    speak(response, settings.voiceProfileId, () => setCallIsSpeaking(false), undefined, settings.voiceSpeed, settings.voicePitch);
-  }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch]);
+
+    // BUG FIX: stop speech rec while AI is talking, then auto-resume listening when done
+    stopRecognition();
+
+    speak(response, settings.voiceProfileId, () => {
+      setCallIsSpeaking(false);
+      // BUG FIX: auto-resume listening after AI finishes speaking
+      setTimeout(() => {
+        listeningDesiredRef.current = true;
+        startRecognitionRef.current();
+      }, 400);
+    }, undefined, settings.voiceSpeed, settings.voicePitch);
+  }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch, stopRecognition]);
+
+  // Keep ref in sync
+  useEffect(() => { processCallMessageRef.current = processCallMessage; }, [processCallMessage]);
 
   const startCall = useCallback(() => {
     setIsCallActive(true);
@@ -337,52 +464,44 @@ export default function App() {
     setCallMessages([]);
     setCallAiResponse('');
     setCallIsSpeaking(false);
+    setCallError('');
+    callMessagesRef.current = [];
     callTimerRef.current = setInterval(() => setCallDuration(d => d + 1), 1000);
-  }, []);
+    // Auto-start listening
+    setTimeout(() => {
+      listeningDesiredRef.current = true;
+      startRecognition();
+    }, 500);
+  }, [startRecognition]);
 
   const endCall = useCallback(() => {
+    stopRecognition();
     setIsCallActive(false);
-    setIsListening(false);
     setCallDuration(0);
     setCallTranscript('');
     setCallAiResponse('');
     setCallIsSpeaking(false);
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; }
+    setCallError('');
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
     stopSpeech();
-  }, []);
+  }, [stopRecognition]);
 
   const toggleCallListening = useCallback(() => {
     if (isListening) {
-      if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} }
-      setIsListening(false);
+      // User explicitly muted — stop and don't auto-resume
+      stopRecognition();
       return;
     }
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { setCallTranscript('Speech recognition not available on this device'); return; }
-    const recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    recognition.onstart = () => { setIsListening(true); setCallTranscript(''); };
-    recognition.onresult = (event: any) => {
-      let interim = '', final = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) final += event.results[i][0].transcript;
-        else interim += event.results[i][0].transcript;
-      }
-      setCallTranscript(interim || final);
-      if (final.trim()) processCallMessage(final.trim());
-    };
-    recognition.onerror = () => { setIsListening(false); setCallTranscript(''); };
-    recognition.onend = () => { setIsListening(false); };
-    recognitionRef.current = recognition;
-    try { recognition.start(); } catch { setIsListening(false); }
-  }, [isListening, processCallMessage]);
+    // User tapped mic to unmute/start listening
+    setCallError('');
+    listeningDesiredRef.current = true;
+    startRecognition();
+  }, [isListening, startRecognition, stopRecognition]);
 
   // Cleanup call on unmount
   useEffect(() => () => {
     if (callTimerRef.current) clearInterval(callTimerRef.current);
+    listeningDesiredRef.current = false;
     if (recognitionRef.current) try { recognitionRef.current.stop(); } catch {}
   }, []);
 
@@ -1720,8 +1839,8 @@ export default function App() {
 
               {/* Status text */}
               <div className="text-center">
-                <div className="text-[10px] font-mono uppercase tracking-[0.3em] mb-2" style={{ color: isListening ? '#4ade80' : callIsSpeaking ? '#fbbf24' : '#71717a' }}>
-                  {isListening ? 'Listening...' : callIsSpeaking ? 'Speaking...' : 'Tap mic to speak'}
+                <div className="text-[10px] font-mono uppercase tracking-[0.3em] mb-2" style={{ color: isListening ? '#4ade80' : callIsSpeaking ? '#fbbf24' : callError ? '#ef4444' : '#71717a' }}>
+                  {callError ? callError : isListening ? 'Listening...' : callIsSpeaking ? 'Speaking...' : 'Tap mic to speak'}
                 </div>
                 <div className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
                   {callMessages.filter(m => m.role === 'user').length} messages exchanged
