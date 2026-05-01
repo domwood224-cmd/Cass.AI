@@ -216,6 +216,7 @@ export default function App() {
   const listeningDesiredRef = useRef(false); // tracks if user wants listening active
   const speakingDoneRef = useRef<(() => void) | null>(null);
   const processingRef = useRef(false); // guard against double processCallMessage calls
+  const aiSpeakingRef = useRef(false); // tracks if AI TTS is currently speaking (avoids stale closure)
 
   // Permissions state
   const [micPermission, setMicPermission] = useState<boolean | null>(null); // null = checking
@@ -422,28 +423,39 @@ export default function App() {
           setCallError('Microphone permission denied. Please allow mic access in Settings.');
           listeningDesiredRef.current = false;
         } else if (event.error === 'no-speech') {
-          // Silent — no speech detected, auto-restart if desired
-          if (listeningDesiredRef.current) {
-            setTimeout(() => startRecognitionRef.current(), 300);
+          // Silent — no speech detected, auto-restart if desired (with guard)
+          if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
+            setTimeout(() => {
+              if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
+                startRecognitionRef.current();
+              }
+            }, 500);
           }
         } else if (event.error === 'aborted') {
           // Normal — we called stop() ourselves, or AI is speaking
         } else {
           setCallError(`Mic error: ${event.error}. Tap mic to retry.`);
-          // Auto-retry for transient errors
-          if (listeningDesiredRef.current) {
-            setTimeout(() => startRecognitionRef.current(), 1000);
+          // Auto-retry for transient errors (with guard)
+          if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
+            setTimeout(() => {
+              if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
+                startRecognitionRef.current();
+              }
+            }, 1000);
           }
         }
       };
 
       recognition.onend = () => {
         setIsListening(false);
-        // BUG FIX: auto-restart if call is active and user still wants to listen
-        if (listeningDesiredRef.current && !callIsSpeaking) {
+        // Only auto-restart if user wants listening AND AI is NOT speaking
+        // Use aiSpeakingRef (ref) instead of callIsSpeaking (state) to avoid stale closure
+        if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
           setTimeout(() => {
-            if (listeningDesiredRef.current) startRecognitionRef.current();
-          }, 200);
+            if (listeningDesiredRef.current && !aiSpeakingRef.current && !processingRef.current) {
+              startRecognitionRef.current();
+            }
+          }, 300);
         }
       };
 
@@ -454,7 +466,7 @@ export default function App() {
       setCallError('Failed to start microphone. Tap mic to retry.');
       setIsListening(false);
     }
-  }, [callIsSpeaking, stopRecognition]);
+  }, [stopRecognition]);
 
   // Keep ref in sync
   useEffect(() => { startRecognitionRef.current = startRecognition; }, [startRecognition]);
@@ -496,6 +508,7 @@ export default function App() {
 
     setCallMessages(withResponse);
     setCallAiResponse(response);
+    aiSpeakingRef.current = true;
     setCallIsSpeaking(true);
 
     // BUG FIX: stop speech rec while AI is talking, then auto-resume listening when done
@@ -509,6 +522,7 @@ export default function App() {
     const resumeMic = () => {
       if (micResumed) return;
       micResumed = true;
+      aiSpeakingRef.current = false;
       setCallIsSpeaking(false);
       setTimeout(() => {
         listeningDesiredRef.current = true;
@@ -560,6 +574,7 @@ export default function App() {
     setCallDuration(0);
     setCallTranscript('');
     setCallAiResponse('');
+    aiSpeakingRef.current = false;
     setCallIsSpeaking(false);
     setCallError('');
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
