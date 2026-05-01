@@ -136,34 +136,37 @@ public class MainActivity extends BridgeActivity {
                     ttsReady = (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED);
 
                     // Listen for utterance completion to notify JS
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        nativeTTS.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-                            @Override
-                            public void onStart(String utteranceId) {
-                                runOnUiThread(() -> {
-                                    WebView wv = getBridge().getWebView();
-                                    if (wv != null) wv.evaluateJavascript(
-                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsStart'));", null);
-                                });
-                            }
-                            @Override
-                            public void onDone(String utteranceId) {
-                                runOnUiThread(() -> {
-                                    WebView wv = getBridge().getWebView();
-                                    if (wv != null) wv.evaluateJavascript(
-                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
-                                });
-                            }
-                            @Override
-                            public void onError(String utteranceId) {
-                                runOnUiThread(() -> {
-                                    WebView wv = getBridge().getWebView();
-                                    if (wv != null) wv.evaluateJavascript(
-                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
-                                });
-                            }
-                        });
-                    }
+                    nativeTTS.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                        @Override
+                        public void onStart(String utteranceId) {
+                            runOnUiThread(() -> {
+                                WebView wv = getBridge().getWebView();
+                                if (wv != null) wv.evaluateJavascript(
+                                    "javascript:window.dispatchEvent(new CustomEvent('nativeTtsStart'));", null);
+                            });
+                        }
+                        @Override
+                        public void onDone(String utteranceId) {
+                            runOnUiThread(() -> {
+                                WebView wv = getBridge().getWebView();
+                                if (wv != null) wv.evaluateJavascript(
+                                    "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
+                            });
+                        }
+                        @Override
+                        public void onError(String utteranceId) {
+                            runOnUiThread(() -> {
+                                WebView wv = getBridge().getWebView();
+                                if (wv != null) wv.evaluateJavascript(
+                                    "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
+                            });
+                        }
+                        // Required on API 21+ — onError with error code
+                        @Override
+                        public void onError(String utteranceId, int errorCode) {
+                            onError(utteranceId);
+                        }
+                    });
 
                     // Fire any pending speak from JS
                     if (ttsReady && pendingTTS != null) {
@@ -190,11 +193,14 @@ public class MainActivity extends BridgeActivity {
         if (nativeTTS != null && ttsReady) {
             nativeTTS.setPitch(pitch);
             nativeTTS.setSpeechRate(rate);
+            // Volume control: set on the utterance params (API 21+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                nativeTTS.setVolume(volume, volume, volume);
+                android.os.Bundle params = new android.os.Bundle();
+                params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume);
+                nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cassidey_tts");
+            } else {
+                nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, null);
             }
-            // QUEUE_FLUSH replaces any current speech
-            nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, null, "cassidey_tts");
         }
     }
 
