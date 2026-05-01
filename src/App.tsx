@@ -234,8 +234,8 @@ export default function App() {
       if (savedMsgs.length > 0) {
         setMessages(savedMsgs.map(m => ({ ...m, timestamp: m.timestamp || Date.now() })));
       }
-      const savedSettings = await readJson<AdvancedSettings>('cassidey_settings.json', DEFAULT_SETTINGS);
-      setSettings(savedSettings);
+      const savedSettings = await readJson<Partial<AdvancedSettings>>('cassidey_settings.json', {});
+      setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
       setSettingsLoaded(true);
       await skillManager.loadLocalProgress();
       await aiEngine.loadLocalProgress();
@@ -690,6 +690,7 @@ export default function App() {
   };
 
   const handlePurge = async () => {
+    if (!confirm('This will permanently erase ALL data — chat history, AI learning, knowledge graph, and skill progress. This cannot be undone.\n\nAre you sure?')) return;
     await aiEngine.reset();
     await skillManager.reset();
     await purgeAll();
@@ -699,6 +700,7 @@ export default function App() {
   };
 
   const handleResetSettings = () => {
+    if (!confirm('Reset all settings to defaults?')) return;
     setSettings(DEFAULT_SETTINGS);
   };
 
@@ -761,7 +763,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: '64px' }}>
+      <main className="flex-1 relative overflow-hidden bg-transparent flex flex-col" style={{ paddingBottom: (insets.navBar ? insets.navBar : 64) + 'px' }}>
         <div className={cn("w-full overflow-y-auto no-scrollbar scroll-smooth flex-1", activeTab === 'graph' ? "h-full": "")}>
           <AnimatePresence mode="wait">
 
@@ -1556,10 +1558,13 @@ export default function App() {
                             <div className="text-sm font-medium text-zinc-100 tracking-wide">{currentVoice.name}</div>
                             <div className="text-[10px] text-zinc-400 truncate">{currentVoice.description}</div>
                           </div>
-                          <button onClick={() => { speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId, undefined, undefined, settings.voiceSpeed, settings.voicePitch); }}
-                            disabled={!isSpeechAvailable() || isSpeakingState}
+                          <button onClick={() => {
+                            if (isSpeakingState) { stopSpeech(); return; }
+                            speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId, undefined, undefined, settings.voiceSpeed, settings.voicePitch);
+                          }}
+                            disabled={!isSpeechAvailable()}
                             className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 text-[9px] font-medium uppercase tracking-widest border border-amber-500/20 hover:bg-amber-500/20 disabled:opacity-30 transition-all flex items-center gap-1.5">
-                            {isSpeakingState && speakingMsgIdx !== null ? (
+                            {isSpeakingState ? (
                               <><VolumeX className="w-3 h-3" /> Stop</>
                             ) : (
                               <><Play className="w-3 h-3" /> Test</>
@@ -1782,7 +1787,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
+      <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl safe-area-bottom">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
         <TabButton icon={<GitBranch className="w-5 h-5" />} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} label="Skills" />
         <TabButton icon={<Brain className="w-5 h-5" />} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} label="Brain" />

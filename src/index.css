@@ -54,6 +54,18 @@
   @apply bg-white/10 backdrop-blur-md border border-white/20 hover:bg-white/20 transition-colors shadow-[0_0_15px_rgba(255,255,255,0.1)_inset];
 }
 
+.glass-panel {
+  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.3),inset_0_1px_rgba(255,255,255,0.05)];
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── Slowed-down animations ─── */
 
 /* User messages: single subtle glow, no loop */
