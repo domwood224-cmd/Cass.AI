@@ -525,7 +525,7 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public String isTtsSpeaking() {
             if (nativeTTS != null) {
-                try { return String.valueOf(nativeTTS.isSpeaking()); } catch {}
+                try { return String.valueOf(nativeTTS.isSpeaking()); } catch (Exception ignored) {}
             }
             return "false";
         }
