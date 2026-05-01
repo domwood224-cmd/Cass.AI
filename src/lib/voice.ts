@@ -542,294 +542,86 @@ export function isPersonaVoice(voiceId: string): boolean {
 }
 
 // ─── Speech Synthesis Engine ───
-// Android WebView TTS is notoriously fragile. Key issues and mitigations:
-// 1. Engine enters "suspended" state after cancel() or idle → resume() before speak
-// 2. cancel() + speak() in same tick silently fails → always setTimeout(50ms) after cancel
-// 3. Long utterances silently pause after ~15s → periodic pause/resume watchdog
-// 4. Some devices drop utterances silently → sentence-chunked queue with retry
-// 5. Voices load async on Android → ensureVoicesLoaded() with cache
+// Primary: Native Android TTS via CassideyNative bridge (reliable, no WebView quirks)
+// Fallback: Web Speech API speechSynthesis (for browser testing / non-Android)
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let isSpeaking = false;
-let pendingSpeakTimeout: ReturnType<typeof setTimeout> | null = null;
 
-// Queue system: speak calls are queued so only one sentence speaks at a time.
-// This prevents overlaps and gives us retry control per chunk.
-let speakQueue: Array<{
-  text: string;
-  voiceProfileId: string;
-  onEnd?: () => void;
-  onStart?: () => void;
-  speedOverride?: number;
-  pitchOverride?: number;
-}> = [];
-let isProcessingQueue = false;
-
-// Chrome/WebView watchdog: speechSynthesis silently pauses after ~15s.
-// Periodic pause/resume keeps it alive for long utterances.
-let speakWatchdog: ReturnType<typeof setInterval> | null = null;
-
-function startSpeakWatchdog() {
-  stopSpeakWatchdog();
-  speakWatchdog = setInterval(() => {
-    if (isSpeaking && window.speechSynthesis.speaking) {
-      try {
-        window.speechSynthesis.pause();
-        window.speechSynthesis.resume();
-      } catch {}
-    }
-  }, 7000);
+// ── Native TTS Bridge ──
+// Access the CassideyNative Java bridge injected into WebView by MainActivity.java
+function getNativeBridge(): any {
+  return (window as any).CassideyNative;
 }
 
-function stopSpeakWatchdog() {
-  if (speakWatchdog) { clearInterval(speakWatchdog); speakWatchdog = null; }
+/** Check if native TTS is available and ready */
+function isNativeTtsAvailable(): boolean {
+  const bridge = getNativeBridge();
+  return !!(bridge && typeof bridge.speakTts === 'function');
 }
 
-/**
- * Force the speech synthesis engine out of suspended state.
- * This is the #1 fix for Android WebView TTS not working.
- * After cancel() or idle, the engine enters "paused" state.
- * resume() forces it back to "active" so speak() actually produces audio.
- */
-function forceResumeEngine(): void {
-  try {
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-    }
-    // Even if not technically paused, calling resume() ensures the engine is awake
-    window.speechSynthesis.resume();
-  } catch {}
-}
+/** Listen for native TTS events (dispatched from Java via CustomEvent) */
+let nativeTtsEndCallback: (() => void) | null = null;
+let nativeTtsStartCallback: (() => void) | null = null;
+let nativeTtsEventsSetup = false;
 
-/**
- * Initialize/unlock speech synthesis during a user gesture context.
- * MUST be called from onClick, onTouchStart, or other user-triggered handlers.
- * On Android WebView, the first speak() from a gesture context activates the
- * audio pipeline. After this, programmatic calls work (with resume() help).
- */
-export function initSpeechSynthesis(): void {
-  if (!isSpeechAvailable()) return;
-  try {
-    window.speechSynthesis.cancel();
-  } catch {}
-  // Force resume to wake up the engine
-  forceResumeEngine();
-}
+function setupNativeTtsEvents(): void {
+  if (nativeTtsEventsSetup) return;
+  nativeTtsEventsSetup = true;
 
-/** Cached voices — populated by ensureVoicesLoaded() */
-let cachedVoices: SpeechSynthesisVoice[] | null = null;
+  window.addEventListener('nativeTtsStart', () => {
+    isSpeaking = true;
+    nativeTtsStartCallback?.();
+  });
 
-/** Check if speech synthesis is available */
-export function isSpeechAvailable(): boolean {
-  return typeof window !== 'undefined' && 'speechSynthesis' in window;
-}
-
-/** Ensure system voices are loaded. Returns cached voices or waits for them. */
-export async function ensureVoicesLoaded(): Promise<SpeechSynthesisVoice[]> {
-  if (cachedVoices && cachedVoices.length > 0) return cachedVoices;
-
-  if (!isSpeechAvailable()) { cachedVoices = []; return []; }
-
-  // Try immediate load
-  const immediate = window.speechSynthesis.getVoices();
-  if (immediate.length > 0) { cachedVoices = immediate; return immediate; }
-
-  // Wait for async load (Android WebView)
-  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
-    const onVoicesChanged = () => {
-      cachedVoices = window.speechSynthesis.getVoices();
-      resolve(cachedVoices);
-      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-    };
-    window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
-    // Timeout fallback
-    setTimeout(() => {
-      cachedVoices = window.speechSynthesis.getVoices();
-      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-      resolve(cachedVoices);
-    }, 3000);
+  window.addEventListener('nativeTtsEnd', () => {
+    isSpeaking = false;
+    nativeTtsEndCallback?.();
   });
 }
 
-/** Stop any current speech (including pending scheduled speech and queue) */
+/** Initialize speech synthesis (warm up native TTS engine) */
+export function initSpeechSynthesis(): void {
+  // For native TTS, the engine initializes in onCreate.
+  // Just ensure event listeners are set up.
+  setupNativeTtsEvents();
+}
+
+/** Check if speech synthesis is available (native or Web Speech API) */
+export function isSpeechAvailable(): boolean {
+  if (isNativeTtsAvailable()) return true;
+  return typeof window !== 'undefined' && 'speechSynthesis' in window;
+}
+
+/** Stop any current speech */
 export function stopSpeech(): void {
-  if (pendingSpeakTimeout) {
-    clearTimeout(pendingSpeakTimeout);
-    pendingSpeakTimeout = null;
+  // Stop native TTS first
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.stopTts === 'function') {
+    try { bridge.stopTts(); } catch {}
   }
-  speakQueue = [];
-  isProcessingQueue = false;
-  stopSpeakWatchdog();
+  // Also stop Web Speech API
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try { window.speechSynthesis.cancel(); } catch {}
-    currentUtterance = null;
-    isSpeaking = false;
   }
+  currentUtterance = null;
+  isSpeaking = false;
+  nativeTtsEndCallback = null;
+  nativeTtsStartCallback = null;
 }
 
 /** Get current speaking state */
 export function getIsSpeaking(): boolean {
+  if (isNativeTtsAvailable()) {
+    const bridge = getNativeBridge();
+    try { return bridge.isTtsSpeaking() === 'true'; } catch {}
+  }
   return isSpeaking;
 }
 
 /**
- * Split text into sentence chunks for reliable TTS on Android WebView.
- * Long text blocks can silently fail — chunks of ~200 chars are much more reliable.
- */
-function splitIntoChunks(text: string): string[] {
-  // For short text, don't chunk
-  if (text.length <= 200) return [text];
-
-  const chunks: string[] = [];
-  // Split on sentence boundaries
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-  let current = '';
-
-  for (const sentence of sentences) {
-    if ((current + sentence).length > 200 && current.length > 0) {
-      chunks.push(current.trim());
-      current = sentence;
-    } else {
-      current += sentence;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
-
-  return chunks.length > 0 ? chunks : [text];
-}
-
-/**
- * Speak a single chunk. Returns true if speak() was called, false if skipped.
- */
-function speakOneChunk(
-  chunk: string,
-  voiceProfileId: string,
-  voices: SpeechSynthesisVoice[],
-  onChunkStart?: () => void,
-  onChunkEnd?: () => void,
-  speedOverride?: number,
-  pitchOverride?: number
-): void {
-  const profile = getVoiceProfile(voiceProfileId);
-  const utterance = new SpeechSynthesisUtterance(chunk);
-  currentUtterance = utterance;
-
-  // Configure voice parameters
-  utterance.pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
-  utterance.rate = speedOverride !== undefined ? speedOverride : profile.rate;
-  utterance.volume = profile.volume;
-
-  // Assign the best available system voice
-  if (voices.length > 0) {
-    const englishVoice = voices.find(v => v.lang.startsWith('en') && v.localService);
-    const anyVoice = voices.find(v => v.localService) || voices[0];
-    utterance.voice = englishVoice || anyVoice;
-  }
-
-  // Track whether utterance actually started
-  let utteranceStarted = false;
-
-  utterance.onstart = () => {
-    utteranceStarted = true;
-    isSpeaking = true;
-    onChunkStart?.();
-  };
-
-  utterance.onend = () => {
-    isSpeaking = false;
-    currentUtterance = null;
-    stopSpeakWatchdog();
-    onChunkEnd?.();
-  };
-
-  utterance.onerror = (event) => {
-    console.warn('[Voice] Chunk speech error:', event?.error, 'chunk:', chunk.substring(0, 50));
-    isSpeaking = false;
-    currentUtterance = null;
-    stopSpeakWatchdog();
-    onChunkEnd?.(); // continue to next chunk even on error
-  };
-
-  // Schedule the speak with the critical resume() call
-  const fireSpeak = () => {
-    try {
-      forceResumeEngine();
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.warn('[Voice] speak() threw:', e);
-      onChunkEnd?.();
-    }
-  };
-
-  // ALWAYS cancel + delay + resume + speak — this is the reliable pattern for Android WebView
-  try { window.speechSynthesis.cancel(); } catch {}
-  pendingSpeakTimeout = setTimeout(fireSpeak, 50);
-
-  // Retry if utterance didn't start within 3 seconds
-  setTimeout(() => {
-    if (!utteranceStarted && currentUtterance === utterance) {
-      console.warn('[Voice] Chunk did not start in 3s — force retry');
-      try { window.speechSynthesis.cancel(); } catch {}
-      isSpeaking = false;
-      forceResumeEngine();
-      pendingSpeakTimeout = setTimeout(fireSpeak, 100);
-    }
-  }, 3000);
-}
-
-/**
- * Process the speak queue — speaks chunks one by one.
- */
-function processQueue(): void {
-  if (isProcessingQueue) return;
-  if (speakQueue.length === 0) {
-    isProcessingQueue = false;
-    return;
-  }
-
-  isProcessingQueue = true;
-  const item = speakQueue.shift()!;
-  const chunks = splitIntoChunks(item.text);
-  let chunkIndex = 0;
-
-  const speakNextChunk = () => {
-    if (chunkIndex >= chunks.length) {
-      // All chunks done
-      isProcessingQueue = false;
-      item.onEnd?.();
-      // Process next item in queue if any
-      if (speakQueue.length > 0) {
-        setTimeout(processQueue, 50);
-      }
-      return;
-    }
-
-    const chunk = chunks[chunkIndex];
-    chunkIndex++;
-
-    // First chunk triggers onStart
-    const isFirst = chunkIndex === 1;
-
-    startSpeakWatchdog();
-    speakOneChunk(
-      chunk,
-      item.voiceProfileId,
-      window.speechSynthesis.getVoices() || cachedVoices || [],
-      isFirst ? item.onStart : undefined,
-      speakNextChunk,
-      item.speedOverride,
-      item.pitchOverride
-    );
-  };
-
-  speakNextChunk();
-}
-
-/**
- * Speak text using a specific voice profile.
- * Uses a queue system for reliability — text is split into sentence chunks
- * and spoken sequentially. Each chunk uses the cancel+resume+delay+speak pattern
- * that works reliably on Android WebView.
+ * Speak text using a voice profile.
+ * Uses native Android TTS when available (reliable), falls back to Web Speech API.
  */
 export function speak(
   text: string,
@@ -839,40 +631,119 @@ export function speak(
   speedOverride?: number,
   pitchOverride?: number
 ): void {
-  if (!isSpeechAvailable()) {
-    console.warn('[Voice] speechSynthesis not available');
-    onEnd?.();
-    return;
-  }
-
   if (!text || !text.trim()) {
     onEnd?.();
     return;
   }
 
-  // If voices not loaded yet, preload then queue
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length === 0) {
-    ensureVoicesLoaded().then(() => {
-      speak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
-    });
+  const cleanText = text.trim();
+
+  // ── Primary: Native Android TTS ──
+  if (isNativeTtsAvailable()) {
+    setupNativeTtsEvents();
+
+    const profile = getVoiceProfile(voiceProfileId);
+    const pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
+    const rate = speedOverride !== undefined ? speedOverride : profile.rate;
+    const volume = profile.volume;
+
+    nativeTtsEndCallback = () => {
+      nativeTtsEndCallback = null;
+      nativeTtsStartCallback = null;
+      onEnd?.();
+    };
+    nativeTtsStartCallback = () => {
+      onStart?.();
+    };
+
+    const bridge = getNativeBridge();
+    try {
+      bridge.speakTts(cleanText, pitch, rate, volume);
+      isSpeaking = true; // Optimistic — nativeTtsStart event confirms
+
+      // Safety timeout: if native TTS doesn't fire events within 60s, auto-complete
+      setTimeout(() => {
+        if (isSpeaking && nativeTtsEndCallback) {
+          console.warn('[Voice] Native TTS safety timeout — forcing onEnd');
+          isSpeaking = false;
+          const cb = nativeTtsEndCallback;
+          nativeTtsEndCallback = null;
+          nativeTtsStartCallback = null;
+          cb?.();
+        }
+      }, 60000);
+    } catch (e) {
+      console.warn('[Voice] Native TTS failed, falling back to Web Speech API:', e);
+      isSpeaking = false;
+      speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+    }
     return;
   }
 
-  // Add to queue
-  speakQueue.push({
-    text: text.trim(),
-    voiceProfileId,
-    onEnd,
-    onStart,
-    speedOverride,
-    pitchOverride,
-  });
+  // ── Fallback: Web Speech API ──
+  speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+}
 
-  // Start processing if not already
-  if (!isProcessingQueue) {
-    processQueue();
+/**
+ * Web Speech API fallback — used only when native TTS is not available.
+ */
+function speakWebApi(
+  text: string,
+  voiceProfileId: string,
+  onEnd?: () => void,
+  onStart?: () => void,
+  speedOverride?: number,
+  pitchOverride?: number
+): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    console.warn('[Voice] Web Speech API not available');
+    onEnd?.();
+    return;
   }
+
+  // Cancel any previous speech
+  try { window.speechSynthesis.cancel(); } catch {}
+  isSpeaking = false;
+
+  const profile = getVoiceProfile(voiceProfileId);
+  const utterance = new SpeechSynthesisUtterance(text);
+  currentUtterance = utterance;
+
+  utterance.pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
+  utterance.rate = speedOverride !== undefined ? speedOverride : profile.rate;
+  utterance.volume = profile.volume;
+
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length > 0) {
+    const englishVoice = voices.find(v => v.lang.startsWith('en') && v.localService);
+    const anyVoice = voices.find(v => v.localService) || voices[0];
+    utterance.voice = englishVoice || anyVoice;
+  }
+
+  utterance.onstart = () => {
+    isSpeaking = true;
+    onStart?.();
+  };
+
+  utterance.onend = () => {
+    isSpeaking = false;
+    currentUtterance = null;
+    onEnd?.();
+  };
+
+  utterance.onerror = () => {
+    isSpeaking = false;
+    currentUtterance = null;
+    onEnd?.();
+  };
+
+  // Chrome/WebView bug: cancel() + speak() in same tick fails
+  setTimeout(() => {
+    try {
+      window.speechSynthesis.resume();
+      window.speechSynthesis.speak(utterance);
+    } catch {}
+  }, 50);
 }
 
 /**

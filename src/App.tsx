@@ -78,7 +78,7 @@ import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey, generateGeminiResponse } from './lib/gemini';
-import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt, ensureVoicesLoaded, initSpeechSynthesis } from './lib/voice';
+import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt, initSpeechSynthesis } from './lib/voice';
 import type { VoiceProfile } from './lib/voice';
 
 // Lazy-load the heavy 3D graph component
@@ -492,19 +492,32 @@ export default function App() {
     // BUG FIX: stop speech rec while AI is talking, then auto-resume listening when done
     stopRecognition();
 
-    // Speak the AI response via TTS. The queue system in voice.ts handles
-    // the cancel+resume+delay+speak pattern needed for Android WebView.
-    // A 300ms delay gives Android time to release audio focus from the mic.
+    // Speak the AI response via TTS.
+    // Now uses native Android TTS via CassideyNative bridge (reliable).
+    // A 500ms delay gives Android time to release audio focus from the mic.
+    let micResumed = false;
+    const resumeMic = () => {
+      if (micResumed) return;
+      micResumed = true;
+      setCallIsSpeaking(false);
+      setTimeout(() => {
+        listeningDesiredRef.current = true;
+        startRecognitionRef.current();
+      }, 400);
+    };
+
     setTimeout(() => {
-      speak(response, settings.voiceProfileId, () => {
-        setCallIsSpeaking(false);
-        // BUG FIX: auto-resume listening after AI finishes speaking
-        setTimeout(() => {
-          listeningDesiredRef.current = true;
-          startRecognitionRef.current();
-        }, 400);
-      }, undefined, settings.voiceSpeed, settings.voicePitch);
-    }, 300);
+      speak(response, settings.voiceProfileId, resumeMic, undefined, settings.voiceSpeed, settings.voicePitch);
+    }, 500);
+
+    // SAFETY: If TTS onEnd never fires (native event missed), force-resume mic after 30s.
+    // This prevents the mic from being permanently stuck.
+    setTimeout(() => {
+      if (!micResumed) {
+        console.warn('[Call] TTS safety timeout — force-resuming mic');
+        resumeMic();
+      }
+    }, 30000);
   }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch, stopRecognition]);
 
   // Keep ref in sync

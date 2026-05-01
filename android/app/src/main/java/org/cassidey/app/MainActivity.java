@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.WindowInsets;
@@ -22,9 +23,19 @@ import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
 
+import java.util.Locale;
+
 public class MainActivity extends BridgeActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
     private static final int MIC_PERMISSION_CODE = 102;
+
+    // ── Native TTS Engine ──
+    private TextToSpeech nativeTTS = null;
+    private boolean ttsReady = false;
+    private String pendingTTS = null;
+    private float pendingTTSPitch = 1.0f;
+    private float pendingTTSRate = 1.0f;
+    private float pendingTTSVolume = 1.0f;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -115,6 +126,76 @@ public class MainActivity extends BridgeActivity {
             );
             webView.evaluateJavascript(js, null);
         }, 300);
+
+        // ── Initialize native TTS engine ──
+        nativeTTS = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                if (status == TextToSpeech.SUCCESS) {
+                    int result = nativeTTS.setLanguage(Locale.US);
+                    ttsReady = (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED);
+
+                    // Listen for utterance completion to notify JS
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        nativeTTS.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                            @Override
+                            public void onStart(String utteranceId) {
+                                runOnUiThread(() -> {
+                                    WebView wv = getBridge().getWebView();
+                                    if (wv != null) wv.evaluateJavascript(
+                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsStart'));", null);
+                                });
+                            }
+                            @Override
+                            public void onDone(String utteranceId) {
+                                runOnUiThread(() -> {
+                                    WebView wv = getBridge().getWebView();
+                                    if (wv != null) wv.evaluateJavascript(
+                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
+                                });
+                            }
+                            @Override
+                            public void onError(String utteranceId) {
+                                runOnUiThread(() -> {
+                                    WebView wv = getBridge().getWebView();
+                                    if (wv != null) wv.evaluateJavascript(
+                                        "javascript:window.dispatchEvent(new CustomEvent('nativeTtsEnd'));", null);
+                                });
+                            }
+                        });
+                    }
+
+                    // Fire any pending speak from JS
+                    if (ttsReady && pendingTTS != null) {
+                        speakNative(pendingTTS, pendingTTSPitch, pendingTTSRate, pendingTTSVolume);
+                        pendingTTS = null;
+                    }
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onDestroy() {
+        if (nativeTTS != null) {
+            nativeTTS.stop();
+            nativeTTS.shutdown();
+            nativeTTS = null;
+        }
+        super.onDestroy();
+    }
+
+    /** Native TTS: speak text using Android's TextToSpeech engine */
+    private void speakNative(final String text, final float pitch, final float rate, final float volume) {
+        if (nativeTTS != null && ttsReady) {
+            nativeTTS.setPitch(pitch);
+            nativeTTS.setSpeechRate(rate);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                nativeTTS.setVolume(volume, volume, volume);
+            }
+            // QUEUE_FLUSH replaces any current speech
+            nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, null, "cassidey_tts");
+        }
     }
 
     /** JavaScript interface class exposed to the WebView */
@@ -178,6 +259,51 @@ public class MainActivity extends BridgeActivity {
                 intent.setData(Uri.parse("package:" + getPackageName()));
                 startActivity(intent);
             });
+        }
+
+        // ── Native TTS Bridge Methods ──
+
+        /** Check if native TTS engine is ready. Returns "true" or "false" (string). */
+        @JavascriptInterface
+        public String isTtsReady() {
+            return String.valueOf(ttsReady);
+        }
+
+        /**
+         * Speak text using native Android TTS.
+         * @param text       The text to speak
+         * @param pitch      0.1 - 2.0 (default 1.0)
+         * @param rate       0.1 - 2.0 (default 1.0)
+         * @param volume     0.0 - 1.0 (default 1.0)
+         */
+        @JavascriptInterface
+        public void speakTts(String text, float pitch, float rate, float volume) {
+            if (ttsReady) {
+                runOnUiThread(() -> speakNative(text, pitch, rate, volume));
+            } else {
+                // TTS not ready yet — queue for when it initializes
+                pendingTTS = text;
+                pendingTTSPitch = pitch;
+                pendingTTSRate = rate;
+                pendingTTSVolume = volume;
+            }
+        }
+
+        /** Stop any current TTS speech. */
+        @JavascriptInterface
+        public void stopTts() {
+            if (nativeTTS != null) {
+                runOnUiThread(() -> nativeTTS.stop());
+            }
+        }
+
+        /** Check if TTS is currently speaking. Returns "true" or "false" (string). */
+        @JavascriptInterface
+        public String isTtsSpeaking() {
+            if (nativeTTS != null) {
+                return String.valueOf(nativeTTS.isSpeaking());
+            }
+            return "false";
         }
     }
 
