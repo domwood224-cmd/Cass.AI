@@ -4,7 +4,6 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
-import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -182,15 +181,11 @@ public class MainActivity extends BridgeActivity {
                 ttsReady = langSet;
                 Log.i(TAG, "TTS engine ready: " + ttsReady);
 
-                // Set audio stream to MUSIC (media volume, not alarm/notification)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build());
-                } else {
-                    nativeTTS.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                }
+                // Set audio attributes: media stream, speech content (modern API)
+                nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build());
 
                 // Listen for utterance completion to notify JS
                 nativeTTS.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
@@ -282,20 +277,15 @@ public class MainActivity extends BridgeActivity {
                 nativeTTS.setPitch((float) pitch);
                 nativeTTS.setSpeechRate((float) rate);
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    android.os.Bundle params = new android.os.Bundle();
-                    params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, (float) volume);
-                    int result = nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cassidey");
-                    if (result != TextToSpeech.SUCCESS) {
-                        Log.e(TAG, "TTS speak() returned ERROR: " + result);
-                        dispatchJsEvent("nativeTtsError", "speak failed: " + result);
-                        dispatchJsEvent("nativeTtsEnd", null);
-                    } else {
-                        Log.d(TAG, "TTS speak() SUCCESS — " + text.length() + " chars");
-                    }
+                android.os.Bundle params = new android.os.Bundle();
+                params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, (float) volume);
+                int result = nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cassidey");
+                if (result != TextToSpeech.SUCCESS) {
+                    Log.e(TAG, "TTS speak() returned ERROR: " + result);
+                    dispatchJsEvent("nativeTtsError", "speak failed: " + result);
+                    dispatchJsEvent("nativeTtsEnd", null);
                 } else {
-                    int result = nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, null);
-                    Log.d(TAG, "TTS speak() legacy result: " + result);
+                    Log.d(TAG, "TTS speak() SUCCESS — " + text.length() + " chars");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Exception in speakNative", e);
