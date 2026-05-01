@@ -542,32 +542,46 @@ export function isPersonaVoice(voiceId: string): boolean {
 }
 
 // ─── Speech Synthesis Engine ───
-// Primary: Native Android TTS via CassideyNative bridge (reliable, no WebView quirks)
-// Fallback: Web Speech API speechSynthesis (for browser testing / non-Android)
+// Primary: Native Android TTS via CassideyNative Java bridge
+// Fallback: Web Speech API (desktop browser testing ONLY — does NOT work on Android WebView)
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let isSpeaking = false;
 
 // ── Native TTS Bridge ──
-// Access the CassideyNative Java bridge injected into WebView by MainActivity.java
 function getNativeBridge(): any {
   return (window as any).CassideyNative;
 }
 
-/** Check if native TTS bridge is available (Java object exists) */
+/** Check if native TTS bridge object exists */
 function isNativeTtsAvailable(): boolean {
   const bridge = getNativeBridge();
-  return !!(bridge && typeof bridge.speakTts === 'function');
+  return !!bridge;
 }
 
-/** Check if native TTS engine is initialized and ready to speak */
+/** Check if native TTS engine is initialized and ready */
 function isNativeTtsReady(): boolean {
   const bridge = getNativeBridge();
-  if (!bridge || typeof bridge.isTtsReady !== 'function') return false;
-  try { return bridge.isTtsReady() === 'true'; } catch { return false; }
+  if (!bridge) return false;
+  try {
+    // DON'T use strict equality — Java String may not coerce perfectly
+    // Check multiple ways to handle different WebView implementations
+    const ready = bridge.isTtsReady();
+    return ready === 'true' || ready === true || ready == 1;
+  } catch { return false; }
 }
 
-/** Listen for native TTS events (dispatched from Java via CustomEvent) */
+/** Check if TTS is currently speaking via native bridge */
+function isNativeTtsSpeaking(): boolean {
+  const bridge = getNativeBridge();
+  if (!bridge) return false;
+  try {
+    const speaking = bridge.isTtsSpeaking();
+    return speaking === 'true' || speaking === true || speaking == 1;
+  } catch { return false; }
+}
+
+// ── Native TTS Event Callbacks ──
 let nativeTtsEndCallback: (() => void) | null = null;
 let nativeTtsStartCallback: (() => void) | null = null;
 let nativeTtsEventsSetup = false;
@@ -577,46 +591,54 @@ function setupNativeTtsEvents(): void {
   nativeTtsEventsSetup = true;
 
   window.addEventListener('nativeTtsStart', () => {
-    console.log('[Voice] nativeTtsStart event received');
+    console.log('[Voice] ★ nativeTtsStart — TTS is speaking');
     isSpeaking = true;
     nativeTtsStartCallback?.();
   });
 
   window.addEventListener('nativeTtsEnd', () => {
-    console.log('[Voice] nativeTtsEnd event received');
+    console.log('[Voice] ★ nativeTtsEnd — TTS finished');
     isSpeaking = false;
-    nativeTtsEndCallback?.();
+    const cb = nativeTtsEndCallback;
+    nativeTtsEndCallback = null;
+    nativeTtsStartCallback = null;
+    cb?.();
   });
 
   window.addEventListener('nativeTtsError', ((e: any) => {
-    console.warn('[Voice] nativeTtsError event:', e.detail || 'unknown error');
+    console.warn('[Voice] ★ nativeTtsError: ' + (e.detail || 'unknown'));
   }) as EventListener);
 
   window.addEventListener('nativeTtsReady', () => {
-    console.log('[Voice] nativeTtsReady event received — TTS engine initialized');
+    console.log('[Voice] ★ nativeTtsReady — engine initialized');
   });
 }
 
-/** Initialize speech synthesis (warm up native TTS engine) */
+/** Initialize speech synthesis */
 export function initSpeechSynthesis(): void {
   setupNativeTtsEvents();
   const bridge = getNativeBridge();
 
   if (bridge) {
-    const ready = isNativeTtsReady();
-    console.log('[Voice] initSpeechSynthesis: bridge=' + !!bridge + ' ttsReady=' + ready);
+    console.log('[Voice] initSpeechSynthesis: native bridge found');
+    console.log('[Voice] Bridge type: ' + typeof bridge);
+    console.log('[Voice] speakTts type: ' + typeof bridge.speakTts);
+    console.log('[Voice] isTtsReady: ' + bridge.isTtsReady());
 
-    // If TTS engine failed to initialize, try reinitializing
+    const ready = isNativeTtsReady();
+    console.log('[Voice] TTS ready: ' + ready);
+
     if (!ready && typeof bridge.reinitTts === 'function') {
       console.log('[Voice] TTS not ready, requesting reinit...');
       try { bridge.reinitTts(); } catch {}
     }
   } else {
-    console.log('[Voice] initSpeechSynthesis: no native bridge — will use Web Speech API');
+    console.warn('[Voice] initSpeechSynthesis: NO native bridge found!');
+    console.warn('[Voice] window.CassideyNative = ' + (window as any).CassideyNative);
   }
 }
 
-/** Check if speech synthesis is available (native or Web Speech API) */
+/** Check if speech synthesis is available */
 export function isSpeechAvailable(): boolean {
   if (isNativeTtsAvailable()) return true;
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
@@ -624,12 +646,11 @@ export function isSpeechAvailable(): boolean {
 
 /** Stop any current speech */
 export function stopSpeech(): void {
-  // Stop native TTS first
+  console.log('[Voice] stopSpeech called');
   const bridge = getNativeBridge();
   if (bridge && typeof bridge.stopTts === 'function') {
-    try { bridge.stopTts(); } catch {}
+    try { bridge.stopTts(); } catch (e) { console.warn('[Voice] stopTts error:', e); }
   }
-  // Also stop Web Speech API
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try { window.speechSynthesis.cancel(); } catch {}
   }
@@ -642,42 +663,15 @@ export function stopSpeech(): void {
 /** Get current speaking state */
 export function getIsSpeaking(): boolean {
   if (isNativeTtsAvailable()) {
-    const bridge = getNativeBridge();
-    try { return bridge.isTtsSpeaking() === 'true'; } catch {}
+    return isNativeTtsSpeaking();
   }
   return isSpeaking;
 }
 
 /**
- * Wait for native TTS to become ready (max wait time).
- * Returns true if TTS became ready, false if timed out.
- */
-function waitForNativeTtsReady(maxWaitMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (isNativeTtsReady()) {
-      resolve(true);
-      return;
-    }
-
-    const startTime = Date.now();
-    const checkInterval = setInterval(() => {
-      if (isNativeTtsReady()) {
-        clearInterval(checkInterval);
-        resolve(true);
-        return;
-      }
-      if (Date.now() - startTime > maxWaitMs) {
-        clearInterval(checkInterval);
-        console.warn('[Voice] Timed out waiting for native TTS (' + maxWaitMs + 'ms)');
-        resolve(false);
-      }
-    }, 200);
-  });
-}
-
-/**
  * Speak text using a voice profile.
- * Uses native Android TTS when available (reliable), falls back to Web Speech API.
+ * SIMPLIFIED FLOW: Call native speakTts(), then verify it's actually speaking.
+ * Don't trust return values from JavascriptInterface (they can be undefined on some devices).
  */
 export function speak(
   text: string,
@@ -687,7 +681,10 @@ export function speak(
   speedOverride?: number,
   pitchOverride?: number
 ): void {
+  console.log('[Voice] speak() called: ' + text.length + ' chars, voice=' + voiceProfileId);
+
   if (!text || !text.trim()) {
+    console.log('[Voice] Empty text, calling onEnd');
     onEnd?.();
     return;
   }
@@ -699,106 +696,74 @@ export function speak(
   const volume = profile.volume;
 
   // ── Primary: Native Android TTS ──
-  if (isNativeTtsAvailable()) {
+  const bridge = getNativeBridge();
+
+  if (bridge) {
+    console.log('[Voice] Using native TTS bridge');
+    console.log('[Voice] TTS ready: ' + isNativeTtsReady());
+    console.log('[Voice] TTS speaking: ' + isNativeTtsSpeaking());
+
     setupNativeTtsEvents();
 
+    // Set up callbacks BEFORE calling speak (events can fire quickly)
     nativeTtsEndCallback = () => {
+      console.log('[Voice] speak onEnd fired');
       nativeTtsEndCallback = null;
       nativeTtsStartCallback = null;
       onEnd?.();
     };
     nativeTtsStartCallback = () => {
+      console.log('[Voice] speak onStart fired');
       onStart?.();
     };
 
-    const bridge = getNativeBridge();
-
-    // Check if TTS engine is ready right now
-    if (isNativeTtsReady()) {
-      const result = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
-      if (result === 'ok') {
-        isSpeaking = true;
-        startSafetyTimeout();
-        return;
-      }
-      // speakTts returned something other than "ok" — fall through to wait
-    }
-
-    // ── TTS not ready yet ──
-    // IMPORTANT: Do NOT fall back to Web Speech API — it produces NO sound on Android WebView.
-    // Instead, queue the text via speakTts (Java will hold it as pendingTTS) and wait for TTS init.
-    console.log('[Voice] Native TTS not ready, queuing and waiting...');
+    // Call native speakTts — let Java handle queuing if not ready
     try {
-      bridge.speakTts(cleanText, pitch, rate, volume);
+      const result = bridge.speakTts(cleanText, pitch, rate, volume);
+      console.log('[Voice] speakTts() returned: "' + result + '" (type: ' + typeof result + ')');
     } catch (e) {
-      console.error('[Voice] speakTts threw:', e);
+      console.error('[Voice] speakTts() THREW:', e);
+      // Fall through to verification
     }
 
-    // Wait up to 10 seconds for TTS to become ready
-    // Java's onInit will speak the pending text when it fires
-    waitForNativeTtsReady(10000).then((ready) => {
-      if (ready) {
-        // TTS engine initialized. The pending text should have been spoken by Java.
-        // Check if it actually started (via nativeTtsStart event setting isSpeaking)
-        if (!isSpeaking) {
-          // Edge case: TTS became ready but speak didn't start — try now
-          console.log('[Voice] TTS ready but not speaking, trying again...');
-          const result2 = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
-          if (result2 === 'ok') {
-            isSpeaking = true;
-          }
-        }
-        startSafetyTimeout();
+    // Mark as speaking optimistically — events will correct this
+    isSpeaking = true;
+    startSafetyTimeout();
+
+    // VERIFICATION: After 2 seconds, check if TTS actually started speaking.
+    // If not, try once more. This catches the case where speakTts() silently failed.
+    setTimeout(() => {
+      if (!isSpeaking) {
+        console.warn('[Voice] Not speaking after 2s — TTS may have failed silently');
+        // Already handled by safety timeout or nativeTtsEnd callback
         return;
       }
-
-      // Still not ready after 10s — try reinitializing TTS
-      console.warn('[Voice] TTS not ready after 10s, requesting reinit...');
-      try { bridge.reinitTts(); } catch {}
-
-      // Wait another 5 seconds for reinit
-      waitForNativeTtsReady(5000).then((reinitReady) => {
-        if (reinitReady && !isSpeaking) {
-          console.log('[Voice] TTS ready after reinit, speaking now');
-          tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
-          isSpeaking = true;
-          startSafetyTimeout();
-        } else {
-          // Complete failure — force onEnd so the mic can resume
-          console.error('[Voice] TTS completely failed after reinit');
-          isSpeaking = false;
-          const cb = nativeTtsEndCallback;
-          nativeTtsEndCallback = null;
-          nativeTtsStartCallback = null;
-          cb?.();
+      if (!isNativeTtsSpeaking() && nativeTtsEndCallback) {
+        // We think we're speaking but Java says no — something went wrong
+        console.warn('[Voice] State mismatch: JS thinks speaking but Java says no');
+        // Try one more time
+        try {
+          console.log('[Voice] Retrying speakTts...');
+          bridge.speakTts(cleanText, pitch, rate, volume);
+        } catch (e2) {
+          console.error('[Voice] Retry failed:', e2);
         }
-      });
-    });
+      }
+    }, 2000);
 
     return; // NEVER fall back to Web Speech API when native bridge exists
   }
 
-  // ── Fallback: Web Speech API (browser testing / desktop only) ──
+  // ── No native bridge — use Web Speech API (desktop/browser only) ──
+  console.warn('[Voice] NO native bridge! Falling back to Web Speech API (will NOT work on Android WebView)');
   speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
-}
-
-/** Try to call native speakTts. Returns "ok" or "not_ready". */
-function tryNativeSpeak(bridge: any, text: string, pitch: number, rate: number, volume: number): string {
-  try {
-    const result = bridge.speakTts(text, pitch, rate, volume);
-    console.log('[Voice] speakTts returned: ' + result);
-    return result || 'ok';
-  } catch (e) {
-    console.error('[Voice] speakTts threw:', e);
-    return 'error';
-  }
 }
 
 /** Start a safety timeout that forces onEnd if native TTS events don't fire */
 function startSafetyTimeout() {
   setTimeout(() => {
     if (isSpeaking && nativeTtsEndCallback) {
-      console.warn('[Voice] Native TTS safety timeout (30s) — forcing onEnd');
+      console.warn('[Voice] Safety timeout (30s) — forcing onEnd');
       isSpeaking = false;
       const cb = nativeTtsEndCallback;
       nativeTtsEndCallback = null;
@@ -809,7 +774,8 @@ function startSafetyTimeout() {
 }
 
 /**
- * Web Speech API fallback — used only when native TTS is not available.
+ * Web Speech API fallback — ONLY for desktop browser testing.
+ * Produces NO audio on Android WebView.
  */
 function speakWebApi(
   text: string,
@@ -825,7 +791,6 @@ function speakWebApi(
     return;
   }
 
-  // Cancel any previous speech
   try { window.speechSynthesis.cancel(); } catch {}
   isSpeaking = false;
 
@@ -844,24 +809,10 @@ function speakWebApi(
     utterance.voice = englishVoice || anyVoice;
   }
 
-  utterance.onstart = () => {
-    isSpeaking = true;
-    onStart?.();
-  };
+  utterance.onstart = () => { isSpeaking = true; onStart?.(); };
+  utterance.onend = () => { isSpeaking = false; currentUtterance = null; onEnd?.(); };
+  utterance.onerror = () => { isSpeaking = false; currentUtterance = null; onEnd?.(); };
 
-  utterance.onend = () => {
-    isSpeaking = false;
-    currentUtterance = null;
-    onEnd?.();
-  };
-
-  utterance.onerror = () => {
-    isSpeaking = false;
-    currentUtterance = null;
-    onEnd?.();
-  };
-
-  // Chrome/WebView bug: cancel() + speak() in same tick fails
   setTimeout(() => {
     try {
       window.speechSynthesis.resume();

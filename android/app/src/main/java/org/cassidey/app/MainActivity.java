@@ -19,6 +19,7 @@ import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import android.webkit.WebChromeClient;
+import android.webkit.WebViewClient;
 import android.webkit.PermissionRequest;
 
 import androidx.annotation.NonNull;
@@ -37,13 +38,16 @@ public class MainActivity extends BridgeActivity {
     // ── Native TTS Engine ──
     private TextToSpeech nativeTTS = null;
     private volatile boolean ttsReady = false;
-    private String pendingTTS = null;
-    private double pendingTTSPitch = 1.0;
-    private double pendingTTSRate = 1.0;
-    private double pendingTTSVolume = 1.0;
+    private volatile String pendingTTS = null;
+    private volatile double pendingTTSPitch = 1.0;
+    private volatile double pendingTTSRate = 1.0;
+    private volatile double pendingTTSVolume = 1.0;
     private AudioManager audioManager = null;
-    private Object audioFocusRequest = null; // AudioFocusRequest on API 26+, null on older
+    private Object audioFocusRequest = null;
     private volatile boolean hasAudioFocus = false;
+    private volatile String lastError = "none";
+    private volatile int speakCallCount = 0;
+    private volatile int speakSuccessCount = 0;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -60,7 +64,6 @@ public class MainActivity extends BridgeActivity {
             );
         }
 
-        // Make status bar and nav bar transparent
         getWindow().setStatusBarColor(0x00000000);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             getWindow().setNavigationBarColor(0x00000000);
@@ -92,27 +95,63 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
-        // ── Inject native bridge after Capacitor's WebView is ready ──
-        getBridge().getWebView().postDelayed(() -> {
-            WebView webView = getBridge().getWebView();
+        // ── Initialize native TTS engine ──
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        initTtsEngine();
 
-            // Handle WebView permission requests (microphone, camera, etc.)
+        // ── Inject native bridge when WebView page finishes loading ──
+        // Using onPageFinished is MORE reliable than postDelayed(300)
+        // because it guarantees the page is ready to receive the bridge.
+        getBridge().getWebView().setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                injectNativeBridge(view);
+            }
+        });
+
+        // Also inject immediately as a fallback (in case onPageFinished already fired)
+        getBridge().getWebView().postDelayed(() -> {
+            try {
+                WebView webView = getBridge().getWebView();
+                if (webView != null) {
+                    // Check if bridge already exists
+                    webView.evaluateJavascript(
+                        "javascript:window.__CASSIDEY_BRIDGE_INJECTED__||false",
+                        value -> {
+                            if (!"true".equals(value)) {
+                                Log.i(TAG, "Fallback bridge injection triggered");
+                                injectNativeBridge(webView);
+                            } else {
+                                Log.i(TAG, "Bridge already injected, skipping fallback");
+                            }
+                        }
+                    );
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Fallback bridge injection failed", e);
+            }
+        }, 500);
+    }
+
+    /** Inject the native bridge, WebChromeClient, and device metrics into the WebView */
+    private void injectNativeBridge(WebView webView) {
+        try {
+            Log.i(TAG, "Injecting native bridge into WebView...");
+
+            // Set up WebChromeClient for permission handling
             webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public void onPermissionRequest(final PermissionRequest request) {
-                    // Auto-grant microphone and audio capture permissions from WebView
-                    for (String resource : request.getResources()) {
-                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
-                            runOnUiThread(() -> request.grant(request.getResources()));
-                            return;
-                        }
-                    }
+                    Log.d(TAG, "WebView permission request: " + java.util.Arrays.toString(request.getResources()));
                     runOnUiThread(() -> request.grant(request.getResources()));
                 }
             });
 
+            // Inject the Java bridge object
             webView.addJavascriptInterface(new NativeBridge(), "CassideyNative");
 
+            // Send device metrics
             int statusBarH = getStatusBarHeight();
             int navBarH = getNavigationBarHeight();
             int screenH = getScreenHeight();
@@ -128,21 +167,25 @@ public class MainActivity extends BridgeActivity {
                 "screenWidth:%d," +
                 "density:%f" +
                 "};" +
+                "window.__CASSIDEY_BRIDGE_INJECTED__=true;" +
                 "window.dispatchEvent(new Event('nativeInsetsReady'));" +
+                "console.log('[Cassidey] Native bridge injected successfully');" +
                 "})();",
                 statusBarH, navBarH, screenH, screenW, density
             );
             webView.evaluateJavascript(js, null);
-        }, 300);
 
-        // ── Initialize native TTS engine ──
-        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        initTtsEngine();
+            Log.i(TAG, "Native bridge injected: CassideyNative, status=" + statusBarH + "px, nav=" + navBarH + "px");
+        } catch (Exception e) {
+            Log.e(TAG, "FAILED to inject native bridge", e);
+        }
     }
 
-    /** Initialize (or re-initialize) the native TTS engine with language fallback */
+    /** Initialize (or re-initialize) the native TTS engine */
     private void initTtsEngine() {
         ttsReady = false;
+        lastError = "initializing";
+        Log.i(TAG, "initTtsEngine: Starting TTS initialization...");
 
         // Shutdown old engine if exists
         if (nativeTTS != null) {
@@ -156,8 +199,10 @@ public class MainActivity extends BridgeActivity {
             @Override
             public void onInit(int status) {
                 if (status != TextToSpeech.SUCCESS) {
-                    Log.e(TAG, "TTS engine initialization FAILED with status: " + status);
-                    dispatchJsEvent("nativeTtsError", "TTS init failed: status=" + status);
+                    String err = "TTS init FAILED: status=" + status;
+                    Log.e(TAG, err);
+                    lastError = err;
+                    runOnUiThread(() -> dispatchJsEvent("nativeTtsError", err));
                     return;
                 }
 
@@ -179,80 +224,92 @@ public class MainActivity extends BridgeActivity {
                 }
 
                 if (!langSet) {
-                    Log.e(TAG, "TTS: NO suitable language found. Trying default engine voices...");
-                    // Last resort: don't set a language, let the engine use whatever it has
-                    langSet = true;
+                    Log.w(TAG, "TTS: NO suitable language found — using default");
+                    langSet = true; // Let the engine use whatever it has
                 }
 
                 ttsReady = langSet;
-                Log.i(TAG, "TTS engine ready: " + ttsReady);
+                lastError = "none";
+                Log.i(TAG, "TTS engine READY: " + ttsReady);
 
-                // Set audio attributes: media stream, speech content (modern API)
-                nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build());
+                // Set audio attributes
+                try {
+                    nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build());
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to set audio attributes", e);
+                }
 
-                // Listen for utterance completion to notify JS
+                // Set up utterance progress listener
                 nativeTTS.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
                     @Override
                     public void onStart(String utteranceId) {
-                        Log.d(TAG, "TTS onStart: " + utteranceId);
+                        Log.i(TAG, "★ TTS onStart: " + utteranceId);
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsStart", null));
                     }
 
                     @Override
                     public void onDone(String utteranceId) {
-                        Log.d(TAG, "TTS onDone: " + utteranceId);
+                        Log.i(TAG, "★ TTS onDone: " + utteranceId);
                         abandonAudioFocusForTts();
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsEnd", null));
                     }
 
                     @Override
                     public void onError(String utteranceId) {
-                        Log.e(TAG, "TTS onError: " + utteranceId);
+                        String err = "utterance error: " + utteranceId;
+                        Log.e(TAG, "★ TTS onError: " + err);
+                        lastError = err;
                         abandonAudioFocusForTts();
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsEnd", null));
-                        runOnUiThread(() -> dispatchJsEvent("nativeTtsError", "utterance error: " + utteranceId));
+                        runOnUiThread(() -> dispatchJsEvent("nativeTtsError", err));
                     }
 
-                    // Required on API 21+ — onError with error code
                     @Override
                     public void onError(String utteranceId, int errorCode) {
-                        Log.e(TAG, "TTS onError: " + utteranceId + " code=" + errorCode);
-                        onError(utteranceId);
+                        String err = "utterance error: " + utteranceId + " code=" + errorCode;
+                        Log.e(TAG, "★ TTS onError: " + err);
+                        lastError = err;
+                        abandonAudioFocusForTts();
+                        runOnUiThread(() -> dispatchJsEvent("nativeTtsEnd", null));
+                        runOnUiThread(() -> dispatchJsEvent("nativeTtsError", err));
                     }
                 });
 
-                // Notify JS that TTS is ready
+                // Notify JS
                 runOnUiThread(() -> dispatchJsEvent("nativeTtsReady", null));
 
-                // Fire any pending speak from JS
-                if (pendingTTS != null) {
-                    Log.i(TAG, "TTS speaking pending text (" + pendingTTS.length() + " chars)");
-                    speakNative(pendingTTS, pendingTTSPitch, pendingTTSRate, pendingTTSVolume);
+                // Speak any pending text
+                String pending = pendingTTS;
+                if (pending != null) {
                     pendingTTS = null;
+                    Log.i(TAG, "Speaking pending text: " + pending.length() + " chars");
+                    speakNative(pending, pendingTTSPitch, pendingTTSPitch, pendingTTSVolume);
                 }
             }
         });
     }
 
-    /** Dispatch a CustomEvent to the WebView JavaScript context */
+    /** Dispatch a CustomEvent to JavaScript — ALWAYS on UI thread */
     private void dispatchJsEvent(String eventName, String detail) {
-        try {
-            WebView wv = getBridge().getWebView();
-            if (wv != null) {
-                String js;
-                if (detail != null) {
-                    js = "javascript:window.dispatchEvent(new CustomEvent('" + eventName + "',{detail:'" + detail.replace("'", "\\'") + "'}));";
-                } else {
-                    js = "javascript:window.dispatchEvent(new CustomEvent('" + eventName + "'));";
+        runOnUiThread(() -> {
+            try {
+                WebView wv = getBridge().getWebView();
+                if (wv != null) {
+                    String js;
+                    if (detail != null) {
+                        js = "javascript:window.dispatchEvent(new CustomEvent('" + eventName + "',{detail:'" + detail.replace("'", "\\'") + "'}));";
+                    } else {
+                        js = "javascript:window.dispatchEvent(new CustomEvent('" + eventName + "'));";
+                    }
+                    wv.evaluateJavascript(js, null);
                 }
-                wv.evaluateJavascript(js, null);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to dispatch JS event: " + eventName, e);
             }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to dispatch JS event: " + eventName, e);
-        }
+        });
     }
 
     @Override
@@ -265,12 +322,12 @@ public class MainActivity extends BridgeActivity {
         super.onDestroy();
     }
 
-    /** Request audio focus so TTS can play through speakers */
+    /** Request audio focus — use GAIN_TRANSIENT (full, not ducked) */
     private void requestAudioFocusForTts() {
         if (audioManager == null) return;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                         .setAudioAttributes(new AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_MEDIA)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -280,11 +337,11 @@ public class MainActivity extends BridgeActivity {
                 audioFocusRequest = request;
                 int result = audioManager.requestAudioFocus(request);
                 hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
-                Log.d(TAG, "Audio focus request result: " + result + " (granted=" + hasAudioFocus + ")");
+                Log.i(TAG, "Audio focus (GAIN_TRANSIENT): " + (hasAudioFocus ? "GRANTED" : "DENIED"));
             } else {
-                int result = audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+                int result = audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
                 hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
-                Log.d(TAG, "Audio focus request (legacy) result: " + result);
+                Log.i(TAG, "Audio focus (legacy GAIN_TRANSIENT): " + (hasAudioFocus ? "GRANTED" : "DENIED"));
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to request audio focus", e);
@@ -292,7 +349,7 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /** Abandon audio focus after TTS finishes */
+    /** Abandon audio focus */
     private void abandonAudioFocusForTts() {
         if (audioManager == null) return;
         try {
@@ -303,20 +360,25 @@ public class MainActivity extends BridgeActivity {
                 audioManager.abandonAudioFocus(null);
             }
             hasAudioFocus = false;
-            Log.d(TAG, "Audio focus abandoned");
         } catch (Exception e) {
             Log.w(TAG, "Failed to abandon audio focus", e);
         }
     }
 
-    /** Native TTS: speak text using Android's TextToSpeech engine */
+    /** Speak text via native Android TTS — MUST be called on UI thread */
     private void speakNative(final String text, final double pitch, final double rate, final double volume) {
+        speakCallCount++;
+
         if (nativeTTS == null) {
-            Log.e(TAG, "speakNative called but nativeTTS is null");
+            Log.e(TAG, "speakNative: nativeTTS is NULL!");
+            lastError = "nativeTTS is null";
+            dispatchJsEvent("nativeTtsError", "TTS engine is null");
+            dispatchJsEvent("nativeTtsEnd", null);
             return;
         }
+
         if (!ttsReady) {
-            Log.w(TAG, "speakNative called but TTS not ready — queuing");
+            Log.w(TAG, "speakNative: TTS not ready — queuing " + text.length() + " chars");
             pendingTTS = text;
             pendingTTSPitch = pitch;
             pendingTTSRate = rate;
@@ -326,7 +388,7 @@ public class MainActivity extends BridgeActivity {
 
         runOnUiThread(() -> {
             try {
-                // Request audio focus before speaking
+                // Request FULL audio focus (not ducked — we need to hear the speech)
                 requestAudioFocusForTts();
 
                 nativeTTS.setPitch((float) pitch);
@@ -335,16 +397,20 @@ public class MainActivity extends BridgeActivity {
                 android.os.Bundle params = new android.os.Bundle();
                 params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, (float) volume);
                 int result = nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cassidey");
-                if (result != TextToSpeech.SUCCESS) {
-                    Log.e(TAG, "TTS speak() returned ERROR: " + result);
+
+                if (result == TextToSpeech.SUCCESS) {
+                    speakSuccessCount++;
+                    Log.i(TAG, "★ speakNative SUCCESS — " + text.length() + " chars, focus=" + hasAudioFocus + ", calls=" + speakCallCount + ", ok=" + speakSuccessCount);
+                } else {
+                    Log.e(TAG, "★ speakNative FAILED — result=" + result + ", text=" + text.substring(0, Math.min(50, text.length())));
+                    lastError = "speak() returned: " + result;
                     abandonAudioFocusForTts();
                     dispatchJsEvent("nativeTtsError", "speak failed: " + result);
                     dispatchJsEvent("nativeTtsEnd", null);
-                } else {
-                    Log.d(TAG, "TTS speak() SUCCESS — " + text.length() + " chars, audioFocus=" + hasAudioFocus);
                 }
             } catch (Exception e) {
-                Log.e(TAG, "Exception in speakNative", e);
+                Log.e(TAG, "★ speakNative EXCEPTION", e);
+                lastError = "exception: " + e.getMessage();
                 abandonAudioFocusForTts();
                 dispatchJsEvent("nativeTtsError", "exception: " + e.getMessage());
                 dispatchJsEvent("nativeTtsEnd", null);
@@ -381,7 +447,6 @@ public class MainActivity extends BridgeActivity {
 
         // ── Permission Helpers ──
 
-        /** Check if microphone permission is granted. Returns "true" or "false" (string for JS compat). */
         @JavascriptInterface
         public String hasMicrophonePermission() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -391,7 +456,6 @@ public class MainActivity extends BridgeActivity {
             return "true";
         }
 
-        /** Request microphone permission. Result is sent via onPermissionsResult. */
         @JavascriptInterface
         public void requestMicrophonePermission() {
             runOnUiThread(() -> {
@@ -405,7 +469,6 @@ public class MainActivity extends BridgeActivity {
             });
         }
 
-        /** Open the app's system settings page so the user can manually grant permissions. */
         @JavascriptInterface
         public void openAppSettings() {
             runOnUiThread(() -> {
@@ -417,70 +480,105 @@ public class MainActivity extends BridgeActivity {
 
         // ── Native TTS Bridge Methods ──
 
-        /** Check if native TTS engine is ready. Returns "true" or "false" (string). */
+        /** Check if TTS engine is ready */
         @JavascriptInterface
         public String isTtsReady() {
             return String.valueOf(ttsReady);
         }
 
         /**
-         * Speak text using native Android TTS.
-         * Uses double params for JavaScript bridge compatibility (JS numbers are doubles).
-         * @param text       The text to speak
-         * @param pitch      0.1 - 2.0 (default 1.0)
-         * @param rate       0.1 - 2.0 (default 1.0)
-         * @param volume     0.0 - 1.0 (default 1.0)
-         * @return "ok" if speak was called, "not_ready" if TTS engine is not initialized
+         * Speak text via native Android TTS.
+         * Java handles queuing if engine isn't ready yet.
          */
         @JavascriptInterface
         public String speakTts(String text, double pitch, double rate, double volume) {
-            Log.d(TAG, "speakTts called: ready=" + ttsReady + " len=" + (text != null ? text.length() : "null"));
+            Log.i(TAG, "speakTts() called: ready=" + ttsReady + " len=" + (text != null ? text.length() : "null") + " vol=" + volume);
+            if (text == null || text.isEmpty()) {
+                Log.w(TAG, "speakTts: empty text!");
+                return "empty";
+            }
             if (ttsReady) {
                 speakNative(text, pitch, rate, volume);
                 return "ok";
             } else {
-                // Queue for when TTS initializes (or re-initializes)
+                Log.i(TAG, "speakTts: TTS not ready, queuing " + text.length() + " chars");
                 pendingTTS = text;
                 pendingTTSPitch = pitch;
                 pendingTTSRate = rate;
                 pendingTTSVolume = volume;
-                return "not_ready";
+                return "queued";
             }
         }
 
-        /** Stop any current TTS speech. */
+        /** Stop any current TTS speech */
         @JavascriptInterface
         public void stopTts() {
-            Log.d(TAG, "stopTts called");
+            Log.i(TAG, "stopTts called");
             if (nativeTTS != null) {
-                runOnUiThread(() -> nativeTTS.stop());
+                runOnUiThread(() -> {
+                    try { nativeTTS.stop(); } catch (Exception e) { Log.w(TAG, "stopTts error", e); }
+                });
             }
         }
 
-        /** Check if TTS is currently speaking. Returns "true" or "false" (string). */
+        /** Check if TTS is currently speaking */
         @JavascriptInterface
         public String isTtsSpeaking() {
             if (nativeTTS != null) {
-                return String.valueOf(nativeTTS.isSpeaking());
+                try { return String.valueOf(nativeTTS.isSpeaking()); } catch {}
             }
             return "false";
         }
 
-        /** Force re-initialize the TTS engine (use if TTS init failed initially). */
+        /** Force re-initialize TTS engine */
         @JavascriptInterface
         public void reinitTts() {
             Log.i(TAG, "reinitTts requested from JS");
             runOnUiThread(() -> initTtsEngine());
         }
 
-        /** Get TTS diagnostic status for debugging. Returns JSON string. */
+        /**
+         * Test TTS — speaks a simple test phrase.
+         * Used to verify the entire JS→Java→TTS→Audio pipeline works.
+         */
+        @JavascriptInterface
+        public String testTts() {
+            Log.i(TAG, "testTts() called");
+            if (nativeTTS == null) {
+                lastError = "TTS engine is null";
+                return "{\"error\":\"TTS engine is null\"}";
+            }
+            if (!ttsReady) {
+                lastError = "TTS not ready";
+                return "{\"error\":\"TTS not ready\"}";
+            }
+            // Speak a simple test on the UI thread
+            runOnUiThread(() -> {
+                try {
+                    requestAudioFocusForTts();
+                    android.os.Bundle params = new android.os.Bundle();
+                    params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
+                    int result = nativeTTS.speak("Testing voice output", TextToSpeech.QUEUE_FLUSH, params, "test");
+                    Log.i(TAG, "testTts speak result: " + (result == TextToSpeech.SUCCESS ? "SUCCESS" : "FAILED=" + result));
+                } catch (Exception e) {
+                    Log.e(TAG, "testTts exception", e);
+                }
+            });
+            return "{\"status\":\"speaking\"}";
+        }
+
+        /** Get comprehensive TTS diagnostic info */
         @JavascriptInterface
         public String getTtsStatus() {
-            return "{\"ready\":" + ttsReady
+            return "{"
+                + "\"ready\":" + ttsReady
                 + ",\"speaking\":" + (nativeTTS != null && nativeTTS.isSpeaking())
                 + ",\"hasEngine\":" + (nativeTTS != null)
                 + ",\"audioFocus\":" + hasAudioFocus
-                + ",\"pendingText\":" + (pendingTTS != null)
+                + ",\"pending\":" + (pendingTTS != null)
+                + ",\"calls\":" + speakCallCount
+                + ",\"success\":" + speakSuccessCount
+                + ",\"lastError\":\"" + lastError.replace("\"", "'") + "\""
                 + "}";
         }
     }
@@ -490,7 +588,6 @@ public class MainActivity extends BridgeActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == MIC_PERMISSION_CODE) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            // Notify the WebView that permission result is in
             runOnUiThread(() -> {
                 WebView webView = getBridge().getWebView();
                 if (webView != null) {
