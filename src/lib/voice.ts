@@ -547,6 +547,40 @@ let currentUtterance: SpeechSynthesisUtterance | null = null;
 let isSpeaking = false;
 let pendingSpeakTimeout: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Whether speech synthesis has been "unlocked" via a user gesture.
+ * Android WebView blocks programmatic speak() until at least one
+ * speak() call originates from a user gesture (click/tap).
+ */
+let speechUnlocked = false;
+
+/**
+ * Initialize/unlock speech synthesis during a user gesture context.
+ * MUST be called from onClick, onTouchStart, or other user-triggered handlers.
+ * Android WebView silently ignores speak() calls outside gesture context until
+ * this warmup is performed. After warmup, programmatic calls work normally.
+ */
+export function initSpeechSynthesis(): void {
+  if (!isSpeechAvailable()) return;
+  try {
+    // Cancel any stale utterances first
+    window.speechSynthesis.cancel();
+  } catch {}
+  speechUnlocked = true;
+  // Speak a near-silent utterance to "unlock" the audio engine
+  const u = new SpeechSynthesisUtterance(' ');
+  u.volume = 0.01; // near-silent (0.0 is ignored by some engines)
+  u.rate = 10;     // finish as fast as possible
+  u.pitch = 1;
+  u.onend = () => { /* engine unlocked — programmatic calls now work */ };
+  u.onerror = () => { speechUnlocked = false; }; // allow retry if warmup fails
+  try {
+    window.speechSynthesis.speak(u);
+  } catch {
+    speechUnlocked = false;
+  }
+}
+
 // Chrome/WebView watchdog: speechSynthesis silently pauses after ~15s.
 // Periodic pause/resume keeps it alive for long utterances.
 let speakWatchdog: ReturnType<typeof setInterval> | null = null;
@@ -716,20 +750,43 @@ function doSpeak(
     stopSpeakWatchdog();
   };
 
+  // Track whether utterance actually started (for retry on Android WebView)
+  let utteranceStarted = false;
+  const origOnStart = utterance.onstart;
+  utterance.onstart = () => {
+    utteranceStarted = true;
+    origOnStart?.();
+  };
+
+  // Schedule the speak call
+  const doSpeakNow = () => {
+    window.speechSynthesis.speak(utterance);
+  };
+
   // KEY FIX: Only delay speak() if we actually cancelled something.
   // Chrome/WebView bug: cancel() + speak() in same tick silently fails.
   // BUT: always using setTimeout breaks user gesture context on Android,
   // which causes auto-speak and programmatic speak to be silently blocked.
   if (wasSpeaking) {
     // Something was playing — use a tick break before speaking
-    pendingSpeakTimeout = setTimeout(() => {
-      pendingSpeakTimeout = null;
-      window.speechSynthesis.speak(utterance);
-    }, 100);
+    pendingSpeakTimeout = setTimeout(doSpeakNow, 100);
   } else {
     // Nothing was playing — speak immediately to preserve user gesture chain
-    window.speechSynthesis.speak(utterance);
+    doSpeakNow();
   }
+
+  // BUG FIX: Android WebView may silently drop speak() outside gesture context.
+  // If the utterance doesn't start within 2s, retry with a cancel+speak cycle.
+  setTimeout(() => {
+    if (!utteranceStarted && currentUtterance === utterance) {
+      console.warn('[Voice] Utterance did not start — retrying with cancel+speak');
+      try { window.speechSynthesis.cancel(); } catch {}
+      isSpeaking = false;
+      // Re-init speech synthesis (attempt unlock) then retry
+      speechUnlocked = false;
+      setTimeout(doSpeakNow, 150);
+    }
+  }, 2000);
 }
 
 /**

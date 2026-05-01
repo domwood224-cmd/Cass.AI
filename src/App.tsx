@@ -78,7 +78,7 @@ import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey, generateGeminiResponse } from './lib/gemini';
-import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt, ensureVoicesLoaded } from './lib/voice';
+import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt, ensureVoicesLoaded, initSpeechSynthesis } from './lib/voice';
 import type { VoiceProfile } from './lib/voice';
 
 // Lazy-load the heavy 3D graph component
@@ -492,20 +492,30 @@ export default function App() {
     // BUG FIX: stop speech rec while AI is talking, then auto-resume listening when done
     stopRecognition();
 
-    speak(response, settings.voiceProfileId, () => {
-      setCallIsSpeaking(false);
-      // BUG FIX: auto-resume listening after AI finishes speaking
-      setTimeout(() => {
-        listeningDesiredRef.current = true;
-        startRecognitionRef.current();
-      }, 400);
-    }, undefined, settings.voiceSpeed, settings.voicePitch);
+    // BUG FIX: Delay TTS start by 200ms to let audio focus transition from mic to speaker.
+    // On Android, stopping speech recognition releases audio focus — starting TTS too
+    // quickly can cause it to be silently dropped.
+    setTimeout(() => {
+      speak(response, settings.voiceProfileId, () => {
+        setCallIsSpeaking(false);
+        // BUG FIX: auto-resume listening after AI finishes speaking
+        setTimeout(() => {
+          listeningDesiredRef.current = true;
+          startRecognitionRef.current();
+        }, 400);
+      }, undefined, settings.voiceSpeed, settings.voicePitch);
+    }, 200);
   }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch, stopRecognition]);
 
   // Keep ref in sync
   useEffect(() => { processCallMessageRef.current = processCallMessage; }, [processCallMessage]);
 
   const startCall = useCallback(() => {
+    // BUG FIX: Unlock speech synthesis during user gesture context.
+    // Android WebView blocks programmatic speak() until a user gesture fires speak().
+    // This warmup allows TTS to work later when AI responds asynchronously.
+    initSpeechSynthesis();
+
     setIsCallActive(true);
     setCallDuration(0);
     setCallTranscript('');
@@ -1787,6 +1797,7 @@ export default function App() {
                             <div className="text-[10px] text-zinc-400 truncate">{currentVoice.description}</div>
                           </div>
                           <button onClick={() => {
+                            initSpeechSynthesis(); // unlock TTS in user gesture context
                             if (isSpeakingState) { stopSpeech(); return; }
                             speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId, undefined, undefined, settings.voiceSpeed, settings.voicePitch);
                           }}
