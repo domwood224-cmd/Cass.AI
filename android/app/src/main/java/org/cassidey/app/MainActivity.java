@@ -51,7 +51,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        Log.i(TAG, "=== MainActivity.onCreate() START ===");
         super.onCreate(savedInstanceState);
+        Log.i(TAG, "=== Capacitor super.onCreate() completed ===");
 
         // ── True edge-to-edge: WebView draws behind system bars ──
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -95,9 +97,17 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
-        // ── Initialize native TTS engine ──
+        // ── Initialize native TTS engine (async, non-blocking) ──
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        initTtsEngine();
+        // Delay TTS init slightly to not block UI startup
+        new android.os.Handler().postDelayed(() -> {
+            try {
+                initTtsEngine();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to initialize TTS engine", e);
+                lastError = "TTS init exception: " + e.getMessage();
+            }
+        }, 1000);
 
         // ── Inject native bridge when WebView page finishes loading ──
         // Using onPageFinished is MORE reliable than postDelayed(300)
@@ -136,6 +146,7 @@ public class MainActivity extends BridgeActivity {
 
     /** Inject the native bridge, WebChromeClient, and device metrics into the WebView */
     private void injectNativeBridge(WebView webView) {
+        Log.i(TAG, "=== injectNativeBridge() called ===");
         try {
             Log.i(TAG, "Injecting native bridge into WebView...");
 
@@ -198,6 +209,7 @@ public class MainActivity extends BridgeActivity {
         nativeTTS = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
             @Override
             public void onInit(int status) {
+                try {
                 if (status != TextToSpeech.SUCCESS) {
                     String err = "TTS init FAILED: status=" + status;
                     Log.e(TAG, err);
@@ -241,7 +253,16 @@ public class MainActivity extends BridgeActivity {
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                             .build());
                 } catch (Exception e) {
-                    Log.w(TAG, "Failed to set audio attributes", e);
+                    Log.w(TAG, "Failed to set audio attributes, trying fallback", e);
+                    try {
+                        // Fallback to media usage if assistant fails
+                        nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build());
+                    } catch (Exception e2) {
+                        Log.w(TAG, "Fallback audio attributes also failed", e2);
+                    }
                 }
 
                 // Set up utterance progress listener
@@ -289,6 +310,12 @@ public class MainActivity extends BridgeActivity {
                     pendingTTS = null;
                     Log.i(TAG, "Speaking pending text: " + pending.length() + " chars");
                     speakNative(pending, pendingTTSPitch, pendingTTSPitch, pendingTTSVolume);
+                }
+                } catch (Exception e) {
+                    String err = "TTS init exception: " + e.getMessage();
+                    Log.e(TAG, err, e);
+                    lastError = err;
+                    runOnUiThread(() -> dispatchJsEvent("nativeTtsError", err));
                 }
             }
         });
