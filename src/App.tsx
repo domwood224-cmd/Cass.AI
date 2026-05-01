@@ -88,33 +88,51 @@ const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphV
 // Shows native TTS engine status during voice calls for debugging
 function TtsDebugStatus() {
   const [status, setStatus] = useState<string | null>(null);
+  const [bridgeExists, setBridgeExists] = useState(false);
   const bridge = (window as any).CassideyNative;
 
   useEffect(() => {
+    setBridgeExists(!!bridge);
     if (!bridge || typeof bridge.getTtsStatus !== 'function') {
-      setStatus(null);
+      setStatus(bridge ? '{ "error": "getTtsStatus not available" }' : null);
       return;
     }
     const check = () => {
       try { setStatus(bridge.getTtsStatus()); } catch { setStatus(null); }
     };
     check();
-    const id = setInterval(check, 1000);
+    const id = setInterval(check, 2000);
     return () => clearInterval(id);
   }, []);
 
-  if (!status) return null;
+  if (!status) {
+    return bridgeExists
+      ? <div className="text-[8px] font-mono text-zinc-600">Bridge exists, checking TTS...</div>
+      : <div className="text-[8px] font-mono text-red-500/60">No native bridge</div>;
+  }
 
   try {
     const s = JSON.parse(status);
+    if (s.error) {
+      return <div className="text-[8px] font-mono text-red-400">TTS: {s.error}</div>;
+    }
     const color = s.ready ? (s.speaking ? '#4ade80' : '#71717a') : '#ef4444';
+    const parts = [
+      s.ready ? 'ready' : 'NOT READY',
+      s.speaking ? 'speaking' : '',
+      s.pending ? 'queued' : '',
+      s.audioFocus ? 'focus' : 'no-focus',
+      'calls:' + (s.calls || 0),
+      'ok:' + (s.success || 0),
+    ].filter(Boolean);
+    const errorStr = s.lastError && s.lastError !== 'none' ? ' | err: ' + s.lastError : '';
     return (
       <div className="text-[8px] font-mono" style={{ color }}>
-        TTS: {s.ready ? 'ready' : 'not ready'}{s.speaking ? ' | speaking' : ''}{s.pendingText ? ' | queued' : ''}
+        TTS: {parts.join(' | ')}{errorStr}
       </div>
     );
   } catch {
-    return null;
+    return <div className="text-[8px] font-mono text-zinc-600">TTS: parsing...</div>;
   }
 }
 

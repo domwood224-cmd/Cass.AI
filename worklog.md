@@ -59,3 +59,26 @@ Stage Summary:
 - Build #56 compiled and completed successfully
 - APK: https://github.com/domwood224-cmd/Cass.AI/releases/download/v0.0.0/app-release.apk
 - Mic should no longer ding-loop during voice calls
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix TTS no-sound — never fall back to broken Web Speech API on Android
+
+Work Log:
+- ROOT CAUSE: speak() waited only 3 seconds for native TTS init, then fell back to Web Speech API
+  which produces ZERO audio on Android WebView. User always got silence.
+- Rewrote speak() in voice.ts to NEVER fall back to Web Speech API when native bridge exists
+- If TTS not ready, queues text via speakTts() (Java holds as pendingTTS and speaks when init fires)
+- Increased TTS ready wait from 3s to 10s, added reinit + 5s second wait before giving up
+- Added AudioManager audio focus request (GAIN_TRANSIENT_MAY_DUCK) before speaking in Java
+- Added audio focus abandon on TTS done/error
+- Added getTtsStatus() Java bridge method for debugging (returns JSON)
+- Added TtsDebugStatus React component showing live TTS status in call UI
+- Increased delay before TTS speak from 500ms to 1000ms for audio focus transition
+
+Stage Summary:
+- Build #57 compiled and completed successfully
+- APK: https://github.com/domwood224-cmd/Cass.AI/releases/download/v0.0.0/app-release.apk
+- TTS now uses native Android TextToSpeech exclusively with audio focus management
+- Call UI shows live TTS engine status (ready/speaking/queued) for debugging
