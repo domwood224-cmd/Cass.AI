@@ -617,26 +617,26 @@ export function speak(
     // Voices haven't loaded yet — preload them, then retry speak
     ensureVoicesLoaded().then(loadedVoices => {
       if (loadedVoices.length > 0) {
-        doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, loadedVoices);
+        doSpeak(text, voiceProfileId, loadedVoices, onEnd, onStart, speedOverride, pitchOverride);
       } else {
         // Even with no voices, try speaking (browser will use default)
-        doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, []);
+        doSpeak(text, voiceProfileId, [], onEnd, onStart, speedOverride, pitchOverride);
       }
     });
     return;
   }
-  doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, voices);
+  doSpeak(text, voiceProfileId, voices, onEnd, onStart, speedOverride, pitchOverride);
 }
 
 /** Internal speak implementation that takes a voice list */
 function doSpeak(
   text: string,
   voiceProfileId: string,
+  voices: SpeechSynthesisVoice[],
   onEnd?: () => void,
   onStart?: () => void,
   speedOverride?: number,
-  pitchOverride?: number,
-  voices: SpeechSynthesisVoice[]
+  pitchOverride?: number
 ): void {
   // Cancel any previous speech (important: Chrome/WebView requires this)
   window.speechSynthesis.cancel();
@@ -670,13 +670,18 @@ function doSpeak(
   };
 
   utterance.onerror = (event) => {
-    console.warn('[Voice] Speech error:', event?.error, event?.message);
+    console.warn('[Voice] Speech error:', event?.error);
     isSpeaking = false;
     currentUtterance = null;
     onEnd?.();
   };
 
-  window.speechSynthesis.speak(utterance);
+  // BUG FIX: On Android WebView, calling speak() in the same tick as cancel()
+  // causes the utterance to silently fail. Use a small setTimeout to break
+  // out of the synchronous cancel → speak chain.
+  setTimeout(() => {
+    window.speechSynthesis.speak(utterance);
+  }, 50);
 }
 
 /**

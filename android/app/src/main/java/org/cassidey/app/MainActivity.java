@@ -2,6 +2,7 @@ package org.cassidey.app;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -12,11 +13,18 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
+    private static final int MIC_PERMISSION_CODE = 102;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -68,6 +76,22 @@ public class MainActivity extends BridgeActivity {
         // ── Inject native bridge after Capacitor's WebView is ready ──
         getBridge().getWebView().postDelayed(() -> {
             WebView webView = getBridge().getWebView();
+
+            // Handle WebView permission requests (microphone, camera, etc.)
+            webView.setWebChromeClient(new WebChromeClient() {
+                @Override
+                public void onPermissionRequest(final PermissionRequest request) {
+                    // Auto-grant microphone and audio capture permissions from WebView
+                    for (String resource : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                            runOnUiThread(() -> request.grant(request.getResources()));
+                            return;
+                        }
+                    }
+                    runOnUiThread(() -> request.grant(request.getResources()));
+                }
+            });
+
             webView.addJavascriptInterface(new NativeBridge(), "CassideyNative");
 
             int statusBarH = getStatusBarHeight();
@@ -118,6 +142,60 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public float getDensity() {
             return MainActivity.this.getResources().getDisplayMetrics().density;
+        }
+
+        // ── Permission Helpers ──
+
+        /** Check if microphone permission is granted. Returns "true" or "false" (string for JS compat). */
+        @JavascriptInterface
+        public String hasMicrophonePermission() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED ? "true" : "false";
+            }
+            return "true"; // Pre-M, permissions are granted at install time
+        }
+
+        /** Request microphone permission. Result is sent via onPermissionsResult. */
+        @JavascriptInterface
+        public void requestMicrophonePermission() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    ActivityCompat.requestPermissions(
+                            MainActivity.this,
+                            new String[]{Manifest.permission.RECORD_AUDIO},
+                            MIC_PERMISSION_CODE
+                    );
+                }
+            });
+        }
+
+        /** Open the app's system settings page so the user can manually grant permissions. */
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            });
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == MIC_PERMISSION_CODE) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            // Notify the WebView that permission result is in
+            runOnUiThread(() -> {
+                WebView webView = getBridge().getWebView();
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                            "javascript:window.dispatchEvent(new CustomEvent('cassidey_permission_result', {detail:{mic:" + granted + "}}));",
+                            null
+                    );
+                }
+            });
         }
     }
 
