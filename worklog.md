@@ -40,3 +40,22 @@ Stage Summary:
 - Build #55 compiled and completed successfully
 - APK available at: https://github.com/domwood224-cmd/Cass.AI/releases/download/v0.0.0/app-release.apk
 - Native TTS now uses modern AudioAttributes API (USAGE_MEDIA, CONTENT_TYPE_SPEECH)
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix mic ding-loop bug in voice call
+
+Work Log:
+- Diagnosed: recognition.onend/onerror handlers checked `callIsSpeaking` (React state) inside a `useCallback` closure that captured the value at creation time
+- When AI TTS set callIsSpeaking=true, recognition handlers still saw old value (false) and kept auto-restarting — causing infinite ding sounds
+- Added `aiSpeakingRef` (useRef) to track TTS speaking state synchronously without stale closure
+- All recognition restart guards now check `aiSpeakingRef` + `processingRef` instead of `callIsSpeaking`
+- Removed `callIsSpeaking` from `startRecognition` dependency array (prevents constant re-creates)
+- Added double-checked guards in setTimeout callbacks to prevent race conditions
+- Increased no-speech restart delay from 300ms to 500ms to reduce ding frequency
+
+Stage Summary:
+- Build #56 compiled and completed successfully
+- APK: https://github.com/domwood224-cmd/Cass.AI/releases/download/v0.0.0/app-release.apk
+- Mic should no longer ding-loop during voice calls
