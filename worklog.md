@@ -22,3 +22,21 @@ Stage Summary:
 - Users can grant mic permission directly from Settings or open system App Settings
 - Speech recognition is gated on mic permission check before starting
 - Build passes `tsc --noEmit` and `vite build` successfully
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix build failure — deprecated setAudioStreamType() removed in modern Android SDK
+
+Work Log:
+- Investigated GitHub Actions build #54 failure via API logs
+- Root cause: `nativeTTS.setAudioStreamType(AudioManager.STREAM_MUSIC)` at line 192 was removed in Android SDK API 33+
+- Also found deprecated 2-arg `speak(text, mode, params)` legacy fallback in `speakNative()`
+- Fixed by removing all pre-Lollipop conditional branches (Capacitor 8 requires API 21+ minimum anyway)
+- Replaced with direct `setAudioAttributes()` call and 4-arg `speak()` call
+- Removed unused `AudioManager` import
+
+Stage Summary:
+- Build #55 compiled and completed successfully
+- APK available at: https://github.com/domwood224-cmd/Cass.AI/releases/download/v0.0.0/app-release.apk
+- Native TTS now uses modern AudioAttributes API (USAGE_MEDIA, CONTENT_TYPE_SPEECH)
