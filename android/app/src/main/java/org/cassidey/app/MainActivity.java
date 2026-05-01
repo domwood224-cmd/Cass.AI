@@ -168,10 +168,12 @@ public class MainActivity extends BridgeActivity {
                 for (Locale loc : localesToTry) {
                     try {
                         int result = nativeTTS.setLanguage(loc);
-                        if (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED) {
-                            Log.i(TAG, "TTS language set to: " + loc.toLanguageTag());
+                        if (result == TextToSpeech.LANG_AVAILABLE || result == TextToSpeech.LANG_COUNTRY_AVAILABLE || result == TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE) {
+                            Log.i(TAG, "TTS language set to: " + loc.toLanguageTag() + " (result=" + result + ")");
                             langSet = true;
                             break;
+                        } else {
+                            Log.w(TAG, "TTS language not available for: " + loc + " (result=" + result + ")");
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "Failed to set TTS language: " + loc, e);
@@ -187,9 +189,9 @@ public class MainActivity extends BridgeActivity {
                 ttsReady = langSet;
                 Log.i(TAG, "TTS engine ready: " + ttsReady);
 
-                // Set audio attributes: media stream, speech content (modern API)
+                // Set audio attributes: assistant usage for TTS (accessibility/speech)
                 nativeTTS.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build());
 
@@ -270,9 +272,9 @@ public class MainActivity extends BridgeActivity {
         if (audioManager == null) return;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                         .setAudioAttributes(new AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setUsage(AudioAttributes.USAGE_ASSISTANT)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                 .build())
                         .setAcceptsDelayedFocusGain(false)
@@ -328,6 +330,14 @@ public class MainActivity extends BridgeActivity {
             try {
                 // Request audio focus before speaking
                 requestAudioFocusForTts();
+
+                // Only speak if we have audio focus
+                if (!hasAudioFocus) {
+                    Log.w(TAG, "No audio focus granted, cannot speak TTS");
+                    dispatchJsEvent("nativeTtsError", "no audio focus");
+                    dispatchJsEvent("nativeTtsEnd", null);
+                    return;
+                }
 
                 nativeTTS.setPitch((float) pitch);
                 nativeTTS.setSpeechRate((float) rate);
