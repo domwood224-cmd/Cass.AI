@@ -545,6 +545,25 @@ export function isPersonaVoice(voiceId: string): boolean {
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let isSpeaking = false;
+let pendingSpeakTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Chrome/WebView watchdog: speechSynthesis silently pauses after ~15s.
+// Periodic pause/resume keeps it alive for long utterances.
+let speakWatchdog: ReturnType<typeof setInterval> | null = null;
+
+function startSpeakWatchdog() {
+  stopSpeakWatchdog();
+  speakWatchdog = setInterval(() => {
+    if (isSpeaking && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    }
+  }, 10000);
+}
+
+function stopSpeakWatchdog() {
+  if (speakWatchdog) { clearInterval(speakWatchdog); speakWatchdog = null; }
+}
 
 /** Cached voices — populated by ensureVoicesLoaded() */
 let cachedVoices: SpeechSynthesisVoice[] | null = null;
@@ -581,8 +600,16 @@ export async function ensureVoicesLoaded(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-/** Stop any current speech */
+/** Stop any current speech (including pending scheduled speech) */
 export function stopSpeech(): void {
+  if (pendingSpeakTimeout) {
+    clearTimeout(pendingSpeakTimeout);
+    pendingSpeakTimeout = null;
+  }
+  if (speakWatchdog) {
+    clearInterval(speakWatchdog);
+    speakWatchdog = null;
+  }
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     currentUtterance = null;
@@ -638,9 +665,19 @@ function doSpeak(
   speedOverride?: number,
   pitchOverride?: number
 ): void {
-  // Cancel any previous speech (important: Chrome/WebView requires this)
-  window.speechSynthesis.cancel();
+  // Clear any previously scheduled speak to prevent ghost utterances
+  if (pendingSpeakTimeout) {
+    clearTimeout(pendingSpeakTimeout);
+    pendingSpeakTimeout = null;
+  }
+
+  // Cancel any currently playing speech
+  const wasSpeaking = window.speechSynthesis.speaking;
+  if (wasSpeaking) {
+    window.speechSynthesis.cancel();
+  }
   isSpeaking = false;
+  stopSpeakWatchdog();
 
   const profile = getVoiceProfile(voiceProfileId);
   const utterance = new SpeechSynthesisUtterance(text);
@@ -661,12 +698,14 @@ function doSpeak(
   utterance.onstart = () => {
     isSpeaking = true;
     onStart?.();
+    startSpeakWatchdog();
   };
 
   utterance.onend = () => {
     isSpeaking = false;
     currentUtterance = null;
     onEnd?.();
+    stopSpeakWatchdog();
   };
 
   utterance.onerror = (event) => {
@@ -674,14 +713,23 @@ function doSpeak(
     isSpeaking = false;
     currentUtterance = null;
     onEnd?.();
+    stopSpeakWatchdog();
   };
 
-  // BUG FIX: On Android WebView, calling speak() in the same tick as cancel()
-  // causes the utterance to silently fail. Use a small setTimeout to break
-  // out of the synchronous cancel → speak chain.
-  setTimeout(() => {
+  // KEY FIX: Only delay speak() if we actually cancelled something.
+  // Chrome/WebView bug: cancel() + speak() in same tick silently fails.
+  // BUT: always using setTimeout breaks user gesture context on Android,
+  // which causes auto-speak and programmatic speak to be silently blocked.
+  if (wasSpeaking) {
+    // Something was playing — use a tick break before speaking
+    pendingSpeakTimeout = setTimeout(() => {
+      pendingSpeakTimeout = null;
+      window.speechSynthesis.speak(utterance);
+    }, 100);
+  } else {
+    // Nothing was playing — speak immediately to preserve user gesture chain
     window.speechSynthesis.speak(utterance);
-  }, 50);
+  }
 }
 
 /**
