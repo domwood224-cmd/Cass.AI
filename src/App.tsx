@@ -78,7 +78,7 @@ import { Skill, SkillCategory, AIEngineState, LearningType } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readJson, writeJson, purgeAll, migrateFromLocalStorage, STORAGE_KEYS } from './lib/storage';
 import { setGeminiApiKey, getGeminiApiKeyDisplay, hasGeminiApiKey, generateGeminiResponse } from './lib/gemini';
-import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt } from './lib/voice';
+import { speak, stopSpeech, getIsSpeaking, isSpeechAvailable, EXCLUSIVE_VOICES, getVoiceProfile, TIER_CONFIG as VOICE_TIER_CONFIG, DEFAULT_VOICE_ID, isPersonaVoice, getVoicePersonalityPrompt, ensureVoicesLoaded } from './lib/voice';
 import type { VoiceProfile } from './lib/voice';
 
 // Lazy-load the heavy 3D graph component

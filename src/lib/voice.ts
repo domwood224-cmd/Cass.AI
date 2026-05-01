@@ -546,9 +546,39 @@ export function isPersonaVoice(voiceId: string): boolean {
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let isSpeaking = false;
 
+/** Cached voices — populated by ensureVoicesLoaded() */
+let cachedVoices: SpeechSynthesisVoice[] | null = null;
+
 /** Check if speech synthesis is available */
 export function isSpeechAvailable(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
+}
+
+/** Ensure system voices are loaded. Returns cached voices or waits for them. */
+export async function ensureVoicesLoaded(): Promise<SpeechSynthesisVoice[]> {
+  if (cachedVoices && cachedVoices.length > 0) return cachedVoices;
+
+  if (!isSpeechAvailable()) { cachedVoices = []; return []; }
+
+  // Try immediate load
+  const immediate = window.speechSynthesis.getVoices();
+  if (immediate.length > 0) { cachedVoices = immediate; return immediate; }
+
+  // Wait for async load (Android WebView)
+  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    const onVoicesChanged = () => {
+      cachedVoices = window.speechSynthesis.getVoices();
+      resolve(cachedVoices);
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+    // Timeout fallback
+    setTimeout(() => {
+      cachedVoices = window.speechSynthesis.getVoices();
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+      resolve(cachedVoices);
+    }, 3000);
+  });
 }
 
 /** Stop any current speech */
@@ -568,6 +598,7 @@ export function getIsSpeaking(): boolean {
 /**
  * Speak text using a specific voice profile.
  * Attempts to find a matching system voice, falls back to default.
+ * BUG FIX: Now uses ensureVoicesLoaded() for Android WebView compatibility.
  */
 export function speak(
   text: string,
@@ -579,22 +610,49 @@ export function speak(
 ): void {
   if (!isSpeechAvailable()) return;
 
-  // Stop any current speech
-  stopSpeech();
+  // BUG FIX: Android WebView voices load async — use cached/preloaded voices
+  // If no cached voices yet, fire-and-forget preload then speak with default
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) {
+    // Voices haven't loaded yet — preload them, then retry speak
+    ensureVoicesLoaded().then(loadedVoices => {
+      if (loadedVoices.length > 0) {
+        doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, loadedVoices);
+      } else {
+        // Even with no voices, try speaking (browser will use default)
+        doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, []);
+      }
+    });
+    return;
+  }
+  doSpeak(text, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride, voices);
+}
+
+/** Internal speak implementation that takes a voice list */
+function doSpeak(
+  text: string,
+  voiceProfileId: string,
+  onEnd?: () => void,
+  onStart?: () => void,
+  speedOverride?: number,
+  pitchOverride?: number,
+  voices: SpeechSynthesisVoice[]
+): void {
+  // Cancel any previous speech (important: Chrome/WebView requires this)
+  window.speechSynthesis.cancel();
+  isSpeaking = false;
 
   const profile = getVoiceProfile(voiceProfileId);
   const utterance = new SpeechSynthesisUtterance(text);
   currentUtterance = utterance;
 
-  // Configure voice parameters — apply overrides from settings sliders if provided
+  // Configure voice parameters
   utterance.pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
   utterance.rate = speedOverride !== undefined ? speedOverride : profile.rate;
   utterance.volume = profile.volume;
 
-  // Try to find a suitable system voice
-  const voices = window.speechSynthesis.getVoices();
+  // Assign the best available system voice
   if (voices.length > 0) {
-    // Prefer English voices, then any available
     const englishVoice = voices.find(v => v.lang.startsWith('en') && v.localService);
     const anyVoice = voices.find(v => v.localService) || voices[0];
     utterance.voice = englishVoice || anyVoice;
@@ -611,7 +669,8 @@ export function speak(
     onEnd?.();
   };
 
-  utterance.onerror = () => {
+  utterance.onerror = (event) => {
+    console.warn('[Voice] Speech error:', event?.error, event?.message);
     isSpeaking = false;
     currentUtterance = null;
     onEnd?.();
