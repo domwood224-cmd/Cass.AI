@@ -62,6 +62,8 @@ import {
   Mic,
   MicOff,
   Speaker,
+  Phone,
+  PhoneOff,
   type LucideIcon
 } from 'lucide-react';
 import { skillManager, ExtendedSkill, SkillTier, TIER_CONFIG } from './lib/skill-tree';
@@ -199,6 +201,18 @@ export default function App() {
   const [speakingMsgIdx, setSpeakingMsgIdx] = useState<number | null>(null);
   const [voiceSelectorOpen, setVoiceSelectorOpen] = useState(false);
 
+  // Voice Call state
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [callTranscript, setCallTranscript] = useState('');
+  const [callDuration, setCallDuration] = useState(0);
+  const [callMessages, setCallMessages] = useState<{ role: string; content: string }[]>([]);
+  const [callAiResponse, setCallAiResponse] = useState('');
+  const [callIsSpeaking, setCallIsSpeaking] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callMessagesRef = useRef<{ role: string; content: string }[]>([]);
+
   useEffect(() => {
     if ((window as any).__CASSIDEY_NATIVE__) {
       const n = (window as any).__CASSIDEY_NATIVE__;
@@ -281,8 +295,96 @@ export default function App() {
     speak(text, settings.voiceProfileId, () => {
       setSpeakingMsgIdx(null);
       setIsSpeakingState(false);
-    });
-  }, [speakingMsgIdx, isSpeakingState, settings.voiceProfileId]);
+    }, undefined, settings.voiceSpeed, settings.voicePitch);
+  }, [speakingMsgIdx, isSpeakingState, settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch]);
+
+  // ─── Voice Call Functions ───
+  useEffect(() => {
+    callMessagesRef.current = callMessages;
+  }, [callMessages]);
+
+  const processCallMessage = useCallback(async (text: string) => {
+    const history = [...callMessagesRef.current, { role: 'user', content: text }];
+    setCallMessages(history);
+    setCallTranscript('');
+    setCallAiResponse('...');
+
+    let response: string;
+    if (hasGeminiApiKey()) {
+      const personality = isPersonaVoice(settings.voiceProfileId)
+        ? getVoicePersonalityPrompt(settings.voiceProfileId)
+        : undefined;
+      try {
+        const geminiResp = await generateGeminiResponse(text, history, personality);
+        response = geminiResp || aiEngine.generateResponse(text);
+      } catch {
+        response = aiEngine.generateResponse(text);
+      }
+    } else {
+      response = aiEngine.generateResponse(text);
+    }
+
+    setCallMessages(prev => [...prev, { role: 'assistant', content: response }]);
+    setCallAiResponse(response);
+    setCallIsSpeaking(true);
+    speak(response, settings.voiceProfileId, () => setCallIsSpeaking(false), undefined, settings.voiceSpeed, settings.voicePitch);
+  }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch]);
+
+  const startCall = useCallback(() => {
+    setIsCallActive(true);
+    setCallDuration(0);
+    setCallTranscript('');
+    setCallMessages([]);
+    setCallAiResponse('');
+    setCallIsSpeaking(false);
+    callTimerRef.current = setInterval(() => setCallDuration(d => d + 1), 1000);
+  }, []);
+
+  const endCall = useCallback(() => {
+    setIsCallActive(false);
+    setIsListening(false);
+    setCallDuration(0);
+    setCallTranscript('');
+    setCallAiResponse('');
+    setCallIsSpeaking(false);
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; }
+    if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null; }
+    stopSpeech();
+  }, []);
+
+  const toggleCallListening = useCallback(() => {
+    if (isListening) {
+      if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} }
+      setIsListening(false);
+      return;
+    }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { setCallTranscript('Speech recognition not available on this device'); return; }
+    const recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognition.onstart = () => { setIsListening(true); setCallTranscript(''); };
+    recognition.onresult = (event: any) => {
+      let interim = '', final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) final += event.results[i][0].transcript;
+        else interim += event.results[i][0].transcript;
+      }
+      setCallTranscript(interim || final);
+      if (final.trim()) processCallMessage(final.trim());
+    };
+    recognition.onerror = () => { setIsListening(false); setCallTranscript(''); };
+    recognition.onend = () => { setIsListening(false); };
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch { setIsListening(false); }
+  }, [isListening, processCallMessage]);
+
+  // Cleanup call on unmount
+  useEffect(() => () => {
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch {}
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0 || ready) {
@@ -578,9 +680,9 @@ export default function App() {
     setMessages(prev => [...prev, { role: 'assistant', content: aiResponse, timestamp: Date.now() }]);
 
     // Auto-speak if enabled
-    if (settings.voiceEnabled && settings.autoSpeak && isSpeechAvailable()) {
+    if (settings.voiceEnabled && settings.autoSpeak && isSpeechAvailable() && !isCallActive) {
       setTimeout(() => {
-        speak(aiResponse, settings.voiceProfileId);
+        speak(aiResponse, settings.voiceProfileId, undefined, undefined, settings.voiceSpeed, settings.voicePitch);
       }, 500);
     }
 
@@ -1454,7 +1556,7 @@ export default function App() {
                             <div className="text-sm font-medium text-zinc-100 tracking-wide">{currentVoice.name}</div>
                             <div className="text-[10px] text-zinc-400 truncate">{currentVoice.description}</div>
                           </div>
-                          <button onClick={() => { speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId); }}
+                          <button onClick={() => { speak("Hello, I am " + currentVoice.name + ". I am your Cassidey AI voice.", settings.voiceProfileId, undefined, undefined, settings.voiceSpeed, settings.voicePitch); }}
                             disabled={!isSpeechAvailable() || isSpeakingState}
                             className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 text-[9px] font-medium uppercase tracking-widest border border-amber-500/20 hover:bg-amber-500/20 disabled:opacity-30 transition-all flex items-center gap-1.5">
                             {isSpeakingState && speakingMsgIdx !== null ? (
@@ -1547,6 +1649,14 @@ export default function App() {
                       onChange={(e) => setInputValue(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
                   </div>
+                  {/* Call button */}
+                  <button onClick={isCallActive ? endCall : startCall}
+                    className={cn("h-full flex items-center justify-center transition-all px-3 z-10 border-l border-white/[0.04]",
+                      isCallActive
+                        ? "bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                        : "bg-gradient-to-b from-white/[0.06] to-transparent hover:from-white/[0.1] text-violet-400")}>
+                    {isCallActive ? <PhoneOff className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+                  </button>
                   <button onClick={handleSend} disabled={!inputValue.trim()}
                     className="px-4 h-full flex items-center justify-center transition-all bg-gradient-to-b from-white/[0.06] to-transparent hover:from-white/[0.1] rounded-r-2xl text-emerald-400 disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed group z-10 border-l border-white/[0.04]">
                     <Anchor className="w-4 h-4 group-hover:scale-110 group-hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.4)] transition-transform" />
@@ -1557,6 +1667,120 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* ═══ VOICE CALL OVERLAY ═══ */}
+      <AnimatePresence>
+        {isCallActive && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col bg-black/[0.97] backdrop-blur-3xl">
+            {/* Call header */}
+            <div className="flex items-center justify-between px-6 pt-14 pb-4" style={{ paddingTop: (insets.statusBar + 56) + 'px' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500/30 to-cyan-500/20 border border-violet-500/30 flex items-center justify-center">
+                  <div className="w-3 h-3 rounded-full bg-violet-400 animate-[pulse_2s_ease-in-out_infinite]" style={{ boxShadow: '0 0 12px rgba(168,85,247,0.6)' }}></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-zinc-100 tracking-wide">{getVoiceProfile(settings.voiceProfileId).name}</div>
+                  <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest">{callDuration > 0 ? `${Math.floor(callDuration/60).toString().padStart(2,'0')}:${(callDuration%60).toString().padStart(2,'0')}` : 'Connecting...'}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_2s_ease-in-out_infinite]" style={{ boxShadow: '0 0 8px rgba(16,185,129,0.6)' }}></div>
+                <span className="text-[8px] font-mono text-emerald-400 uppercase tracking-widest">Live</span>
+              </div>
+            </div>
+
+            {/* Call content area */}
+            <div className="flex-1 flex flex-col items-center justify-center px-6 space-y-6">
+              {/* Visualizer */}
+              <div className="relative flex items-center justify-center">
+                <motion.div animate={{ scale: isListening ? [1, 1.3, 1] : [1, 1.05, 1], opacity: isListening ? 0.6 : 0.2 }}
+                  transition={{ duration: isListening ? 0.8 : 3, repeat: Infinity }}
+                  className="absolute w-40 h-40 rounded-full bg-gradient-to-br from-violet-500/20 to-cyan-500/10 border border-violet-500/10"></motion.div>
+                <motion.div animate={{ scale: isListening ? [1, 1.2, 1] : [1, 1.03, 1], opacity: isListening ? 0.4 : 0.15 }}
+                  transition={{ duration: isListening ? 0.6 : 4, repeat: Infinity, delay: 0.2 }}
+                  className="absolute w-56 h-56 rounded-full bg-gradient-to-br from-violet-500/10 to-cyan-500/5 border border-violet-500/5"></motion.div>
+                <motion.div animate={{ scale: isListening ? [1, 1.1, 1] : [1, 1.02, 1] }}
+                  transition={{ duration: isListening ? 1.2 : 5, repeat: Infinity }}
+                  className="w-24 h-24 rounded-full bg-gradient-to-br from-zinc-800 to-black border border-white/10 flex items-center justify-center shadow-[0_0_60px_rgba(138,43,226,0.15)]">
+                  {callIsSpeaking ? (
+                    <Volume2 className="w-8 h-8 text-amber-400 animate-[pulse_1s_ease-in-out_infinite]" />
+                  ) : isListening ? (
+                    <Mic className="w-8 h-8 text-emerald-400 animate-[pulse_1s_ease-in-out_infinite]" />
+                  ) : (
+                    <Mic className="w-8 h-8 text-zinc-400" />
+                  )}
+                </motion.div>
+              </div>
+
+              {/* Status text */}
+              <div className="text-center">
+                <div className="text-[10px] font-mono uppercase tracking-[0.3em] mb-2" style={{ color: isListening ? '#4ade80' : callIsSpeaking ? '#fbbf24' : '#71717a' }}>
+                  {isListening ? 'Listening...' : callIsSpeaking ? 'Speaking...' : 'Tap mic to speak'}
+                </div>
+                <div className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
+                  {callMessages.filter(m => m.role === 'user').length} messages exchanged
+                </div>
+              </div>
+
+              {/* Live transcript */}
+              {(callTranscript || callAiResponse) && (
+                <div className="w-full max-w-md space-y-2">
+                  {callTranscript && (
+                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+                      className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl px-4 py-2.5">
+                      <div className="text-[8px] font-mono text-emerald-400/60 uppercase tracking-widest mb-1">You</div>
+                      <div className="text-sm text-zinc-200">{callTranscript}</div>
+                    </motion.div>
+                  )}
+                  {callAiResponse && !callTranscript && (
+                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+                      className="bg-violet-500/5 border border-violet-500/10 rounded-xl px-4 py-2.5">
+                      <div className="text-[8px] font-mono text-violet-400/60 uppercase tracking-widest mb-1">{getVoiceProfile(settings.voiceProfileId).name}</div>
+                      <div className="text-sm text-zinc-200 font-light leading-relaxed">{callAiResponse}</div>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+
+              {/* Recent call messages */}
+              {callMessages.length > 0 && !callTranscript && !callAiResponse && (
+                <div className="w-full max-w-md max-h-[200px] overflow-y-auto no-scrollbar space-y-2">
+                  {callMessages.slice(-4).map((msg, i) => (
+                    <div key={i} className={cn("rounded-xl px-4 py-2",
+                      msg.role === 'user' ? "bg-emerald-500/5 border border-emerald-500/10" : "bg-violet-500/5 border border-violet-500/10")}>
+                      <div className={cn("text-[7px] font-mono uppercase tracking-widest mb-0.5",
+                        msg.role === 'user' ? "text-emerald-400/50" : "text-violet-400/50")}>
+                        {msg.role === 'user' ? 'You' : getVoiceProfile(settings.voiceProfileId).name}
+                      </div>
+                      <div className="text-[12px] text-zinc-300 truncate">{msg.content}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Call controls */}
+            <div className="flex items-center justify-center gap-8 px-6 pb-8" style={{ paddingBottom: (insets.navBar + 32) + 'px' }}>
+              <button onClick={stopSpeech} disabled={!callIsSpeaking}
+                className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-zinc-400 disabled:opacity-30 transition-all hover:bg-white/10">
+                <VolumeX className="w-5 h-5" />
+              </button>
+              <button onClick={toggleCallListening}
+                className={cn("w-16 h-16 rounded-full flex items-center justify-center transition-all active:scale-95",
+                  isListening
+                    ? "bg-emerald-500/20 border-2 border-emerald-500/40 shadow-[0_0_30px_rgba(16,185,129,0.2)]"
+                    : "bg-gradient-to-b from-white/10 to-white/5 border-2 border-white/20 hover:from-white/15")}>
+                <Mic className={cn("w-7 h-7 transition-colors", isListening ? "text-emerald-400" : "text-zinc-200")} />
+              </button>
+              <button onClick={endCall}
+                className="w-12 h-12 rounded-full bg-red-500/10 border-2 border-red-500/30 flex items-center justify-center text-red-400 transition-all hover:bg-red-500/20 active:scale-95">
+                <PhoneOff className="w-5 h-5" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <nav className="fixed bottom-0 left-0 right-0 h-16 glass-nav flex items-center justify-around px-2 z-40 backdrop-blur-2xl">
         <TabButton icon={<MessageSquare className="w-5 h-5" />} active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} label="Chat" />
