@@ -492,9 +492,9 @@ export default function App() {
     // BUG FIX: stop speech rec while AI is talking, then auto-resume listening when done
     stopRecognition();
 
-    // BUG FIX: Delay TTS start by 200ms to let audio focus transition from mic to speaker.
-    // On Android, stopping speech recognition releases audio focus — starting TTS too
-    // quickly can cause it to be silently dropped.
+    // Speak the AI response via TTS. The queue system in voice.ts handles
+    // the cancel+resume+delay+speak pattern needed for Android WebView.
+    // A 300ms delay gives Android time to release audio focus from the mic.
     setTimeout(() => {
       speak(response, settings.voiceProfileId, () => {
         setCallIsSpeaking(false);
@@ -504,16 +504,15 @@ export default function App() {
           startRecognitionRef.current();
         }, 400);
       }, undefined, settings.voiceSpeed, settings.voicePitch);
-    }, 200);
+    }, 300);
   }, [settings.voiceProfileId, settings.voiceSpeed, settings.voicePitch, stopRecognition]);
 
   // Keep ref in sync
   useEffect(() => { processCallMessageRef.current = processCallMessage; }, [processCallMessage]);
 
   const startCall = useCallback(() => {
-    // BUG FIX: Unlock speech synthesis during user gesture context.
-    // Android WebView blocks programmatic speak() until a user gesture fires speak().
-    // This warmup allows TTS to work later when AI responds asynchronously.
+    // BUG FIX: Wake up speech synthesis engine during user gesture context.
+    // This cancel+resume activates the TTS audio pipeline on Android WebView.
     initSpeechSynthesis();
 
     setIsCallActive(true);
