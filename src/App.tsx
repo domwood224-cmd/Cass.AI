@@ -84,6 +84,40 @@ import type { VoiceProfile } from './lib/voice';
 // Lazy-load the heavy 3D graph component
 const KnowledgeGraphVisualizer = lazy(() => import('./components/KnowledgeGraphVisualizer').then(m => ({ default: m.KnowledgeGraphVisualizer })));
 
+// ─── TTS Debug Status Component ───
+// Shows native TTS engine status during voice calls for debugging
+function TtsDebugStatus() {
+  const [status, setStatus] = useState<string | null>(null);
+  const bridge = (window as any).CassideyNative;
+
+  useEffect(() => {
+    if (!bridge || typeof bridge.getTtsStatus !== 'function') {
+      setStatus(null);
+      return;
+    }
+    const check = () => {
+      try { setStatus(bridge.getTtsStatus()); } catch { setStatus(null); }
+    };
+    check();
+    const id = setInterval(check, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!status) return null;
+
+  try {
+    const s = JSON.parse(status);
+    const color = s.ready ? (s.speaking ? '#4ade80' : '#71717a') : '#ef4444';
+    return (
+      <div className="text-[8px] font-mono" style={{ color }}>
+        TTS: {s.ready ? 'ready' : 'not ready'}{s.speaking ? ' | speaking' : ''}{s.pendingText ? ' | queued' : ''}
+      </div>
+    );
+  } catch {
+    return null;
+  }
+}
+
 // ─── Types ───
 interface AdvancedSettings {
   learningRateMultiplier: number;
@@ -515,8 +549,8 @@ export default function App() {
     stopRecognition();
 
     // Speak the AI response via TTS.
-    // Now uses native Android TTS via CassideyNative bridge (reliable).
-    // A 500ms delay gives Android time to release audio focus from the mic.
+    // Uses native Android TTS via CassideyNative bridge (reliable).
+    // 1s delay gives Android time to release audio focus from the mic before TTS speaks.
     console.log('[Call] Speaking response: "' + response.substring(0, 50) + '..." (' + response.length + ' chars)');
     let micResumed = false;
     const resumeMic = () => {
@@ -527,12 +561,12 @@ export default function App() {
       setTimeout(() => {
         listeningDesiredRef.current = true;
         startRecognitionRef.current();
-      }, 400);
+      }, 500);
     };
 
     setTimeout(() => {
       speak(response, settings.voiceProfileId, resumeMic, undefined, settings.voiceSpeed, settings.voicePitch);
-    }, 500);
+    }, 1000);
 
     // SAFETY: If TTS onEnd never fires (native event missed), force-resume mic after 30s.
     // This prevents the mic from being permanently stuck.
@@ -1763,7 +1797,7 @@ export default function App() {
                   </div>
 
                   {/* Master Voice Toggle */}
-                  <SettingToggle icon={settings.voiceEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />} label="Voice Output" description="Enable text-to-speech to give Cassidey a voice. Uses the Web Speech API for on-device synthesis." color="text-amber-400">
+                  <SettingToggle icon={settings.voiceEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />} label="Voice Output" description="Enable text-to-speech to give Cassidey a voice. Uses native Android TTS on your device." color="text-amber-400">
                     <button onClick={() => updateSetting('voiceEnabled', !settings.voiceEnabled)}
                       className={cn("relative w-10 h-5 rounded-full transition-all duration-300 border", settings.voiceEnabled ? "bg-amber-500/20 border-amber-500/40" : "bg-white/5 border-white/10")}>
                       <motion.div animate={{ x: settings.voiceEnabled ? 20 : 2 }} transition={{ type: 'spring', stiffness: 500, damping: 30 }}
@@ -1996,12 +2030,10 @@ export default function App() {
 
               {/* Status text */}
               <div className="text-center">
-                <div className="text-[10px] font-mono uppercase tracking-[0.3em] mb-2" style={{ color: isListening ? '#4ade80' : callIsSpeaking ? '#fbbf24' : callError ? '#ef4444' : '#71717a' }}>
+                <div className="text-[10px] font-mono uppercase tracking-[0.3em] mb-1" style={{ color: isListening ? '#4ade80' : callIsSpeaking ? '#fbbf24' : callError ? '#ef4444' : '#71717a' }}>
                   {callError ? callError : isListening ? 'Listening...' : callIsSpeaking ? 'Speaking...' : 'Tap mic to speak'}
                 </div>
-                <div className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
-                  {callMessages.filter(m => m.role === 'user').length} messages exchanged
-                </div>
+                <TtsDebugStatus />
               </div>
 
               {/* Live transcript */}

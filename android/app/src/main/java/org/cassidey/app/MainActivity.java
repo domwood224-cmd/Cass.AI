@@ -4,6 +4,8 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -39,6 +41,9 @@ public class MainActivity extends BridgeActivity {
     private double pendingTTSPitch = 1.0;
     private double pendingTTSRate = 1.0;
     private double pendingTTSVolume = 1.0;
+    private AudioManager audioManager = null;
+    private Object audioFocusRequest = null; // AudioFocusRequest on API 26+, null on older
+    private volatile boolean hasAudioFocus = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -131,6 +136,7 @@ public class MainActivity extends BridgeActivity {
         }, 300);
 
         // ── Initialize native TTS engine ──
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         initTtsEngine();
     }
 
@@ -198,12 +204,14 @@ public class MainActivity extends BridgeActivity {
                     @Override
                     public void onDone(String utteranceId) {
                         Log.d(TAG, "TTS onDone: " + utteranceId);
+                        abandonAudioFocusForTts();
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsEnd", null));
                     }
 
                     @Override
                     public void onError(String utteranceId) {
                         Log.e(TAG, "TTS onError: " + utteranceId);
+                        abandonAudioFocusForTts();
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsEnd", null));
                         runOnUiThread(() -> dispatchJsEvent("nativeTtsError", "utterance error: " + utteranceId));
                     }
@@ -257,6 +265,50 @@ public class MainActivity extends BridgeActivity {
         super.onDestroy();
     }
 
+    /** Request audio focus so TTS can play through speakers */
+    private void requestAudioFocusForTts() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                AudioFocusRequest request = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build())
+                        .setAcceptsDelayedFocusGain(false)
+                        .build();
+                audioFocusRequest = request;
+                int result = audioManager.requestAudioFocus(request);
+                hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+                Log.d(TAG, "Audio focus request result: " + result + " (granted=" + hasAudioFocus + ")");
+            } else {
+                int result = audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+                hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+                Log.d(TAG, "Audio focus request (legacy) result: " + result);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to request audio focus", e);
+            hasAudioFocus = false;
+        }
+    }
+
+    /** Abandon audio focus after TTS finishes */
+    private void abandonAudioFocusForTts() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest((AudioFocusRequest) audioFocusRequest);
+                audioFocusRequest = null;
+            } else {
+                audioManager.abandonAudioFocus(null);
+            }
+            hasAudioFocus = false;
+            Log.d(TAG, "Audio focus abandoned");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to abandon audio focus", e);
+        }
+    }
+
     /** Native TTS: speak text using Android's TextToSpeech engine */
     private void speakNative(final String text, final double pitch, final double rate, final double volume) {
         if (nativeTTS == null) {
@@ -274,6 +326,9 @@ public class MainActivity extends BridgeActivity {
 
         runOnUiThread(() -> {
             try {
+                // Request audio focus before speaking
+                requestAudioFocusForTts();
+
                 nativeTTS.setPitch((float) pitch);
                 nativeTTS.setSpeechRate((float) rate);
 
@@ -282,13 +337,15 @@ public class MainActivity extends BridgeActivity {
                 int result = nativeTTS.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cassidey");
                 if (result != TextToSpeech.SUCCESS) {
                     Log.e(TAG, "TTS speak() returned ERROR: " + result);
+                    abandonAudioFocusForTts();
                     dispatchJsEvent("nativeTtsError", "speak failed: " + result);
                     dispatchJsEvent("nativeTtsEnd", null);
                 } else {
-                    Log.d(TAG, "TTS speak() SUCCESS — " + text.length() + " chars");
+                    Log.d(TAG, "TTS speak() SUCCESS — " + text.length() + " chars, audioFocus=" + hasAudioFocus);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Exception in speakNative", e);
+                abandonAudioFocusForTts();
                 dispatchJsEvent("nativeTtsError", "exception: " + e.getMessage());
                 dispatchJsEvent("nativeTtsEnd", null);
             }
@@ -414,6 +471,17 @@ public class MainActivity extends BridgeActivity {
         public void reinitTts() {
             Log.i(TAG, "reinitTts requested from JS");
             runOnUiThread(() -> initTtsEngine());
+        }
+
+        /** Get TTS diagnostic status for debugging. Returns JSON string. */
+        @JavascriptInterface
+        public String getTtsStatus() {
+            return "{\"ready\":" + ttsReady
+                + ",\"speaking\":" + (nativeTTS != null && nativeTTS.isSpeaking())
+                + ",\"hasEngine\":" + (nativeTTS != null)
+                + ",\"audioFocus\":" + hasAudioFocus
+                + ",\"pendingText\":" + (pendingTTS != null)
+                + "}";
         }
     }
 

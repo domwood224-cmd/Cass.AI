@@ -715,39 +715,70 @@ export function speak(
 
     // Check if TTS engine is ready right now
     if (isNativeTtsReady()) {
-      // Ready — speak immediately
       const result = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
       if (result === 'ok') {
         isSpeaking = true;
-        // Safety timeout: if native TTS doesn't fire events within 60s, auto-complete
         startSafetyTimeout();
         return;
       }
+      // speakTts returned something other than "ok" — fall through to wait
     }
 
-    // TTS not ready yet — wait for it with retries
-    console.log('[Voice] Native TTS not ready, waiting...');
-    waitForNativeTtsReady(3000).then((ready) => {
+    // ── TTS not ready yet ──
+    // IMPORTANT: Do NOT fall back to Web Speech API — it produces NO sound on Android WebView.
+    // Instead, queue the text via speakTts (Java will hold it as pendingTTS) and wait for TTS init.
+    console.log('[Voice] Native TTS not ready, queuing and waiting...');
+    try {
+      bridge.speakTts(cleanText, pitch, rate, volume);
+    } catch (e) {
+      console.error('[Voice] speakTts threw:', e);
+    }
+
+    // Wait up to 10 seconds for TTS to become ready
+    // Java's onInit will speak the pending text when it fires
+    waitForNativeTtsReady(10000).then((ready) => {
       if (ready) {
-        console.log('[Voice] Native TTS ready after wait — speaking now');
-        const result = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
-        if (result === 'ok') {
+        // TTS engine initialized. The pending text should have been spoken by Java.
+        // Check if it actually started (via nativeTtsStart event setting isSpeaking)
+        if (!isSpeaking) {
+          // Edge case: TTS became ready but speak didn't start — try now
+          console.log('[Voice] TTS ready but not speaking, trying again...');
+          const result2 = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
+          if (result2 === 'ok') {
+            isSpeaking = true;
+          }
+        }
+        startSafetyTimeout();
+        return;
+      }
+
+      // Still not ready after 10s — try reinitializing TTS
+      console.warn('[Voice] TTS not ready after 10s, requesting reinit...');
+      try { bridge.reinitTts(); } catch {}
+
+      // Wait another 5 seconds for reinit
+      waitForNativeTtsReady(5000).then((reinitReady) => {
+        if (reinitReady && !isSpeaking) {
+          console.log('[Voice] TTS ready after reinit, speaking now');
+          tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
           isSpeaking = true;
           startSafetyTimeout();
-          return;
+        } else {
+          // Complete failure — force onEnd so the mic can resume
+          console.error('[Voice] TTS completely failed after reinit');
+          isSpeaking = false;
+          const cb = nativeTtsEndCallback;
+          nativeTtsEndCallback = null;
+          nativeTtsStartCallback = null;
+          cb?.();
         }
-      }
-      // Still not ready or speak failed — fall back to Web Speech API
-      console.warn('[Voice] Native TTS not available, falling back to Web Speech API');
-      isSpeaking = false;
-      nativeTtsEndCallback = null;
-      nativeTtsStartCallback = null;
-      speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+      });
     });
-    return;
+
+    return; // NEVER fall back to Web Speech API when native bridge exists
   }
 
-  // ── Fallback: Web Speech API ──
+  // ── Fallback: Web Speech API (browser testing / desktop only) ──
   speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
 }
 
@@ -767,14 +798,14 @@ function tryNativeSpeak(bridge: any, text: string, pitch: number, rate: number, 
 function startSafetyTimeout() {
   setTimeout(() => {
     if (isSpeaking && nativeTtsEndCallback) {
-      console.warn('[Voice] Native TTS safety timeout (60s) — forcing onEnd');
+      console.warn('[Voice] Native TTS safety timeout (30s) — forcing onEnd');
       isSpeaking = false;
       const cb = nativeTtsEndCallback;
       nativeTtsEndCallback = null;
       nativeTtsStartCallback = null;
       cb?.();
     }
-  }, 60000);
+  }, 30000);
 }
 
 /**
