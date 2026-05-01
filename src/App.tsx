@@ -215,6 +215,7 @@ export default function App() {
   const callMessagesRef = useRef<{ role: string; content: string }[]>([]);
   const listeningDesiredRef = useRef(false); // tracks if user wants listening active
   const speakingDoneRef = useRef<(() => void) | null>(null);
+  const processingRef = useRef(false); // guard against double processCallMessage calls
 
   // Permissions state
   const [micPermission, setMicPermission] = useState<boolean | null>(null); // null = checking
@@ -402,7 +403,14 @@ export default function App() {
         if (final.trim()) {
           // Stop listening while AI processes — avoids recognition/synthesis conflict
           try { recognition.stop(); } catch {}
-          processCallMessageRef.current(final.trim());
+          // Guard: skip if already processing a previous utterance
+          if (!processingRef.current) {
+            processingRef.current = true;
+            console.log('[Call] Recognition final: "' + final.trim() + '"');
+            processCallMessageRef.current(final.trim()).finally(() => {
+              processingRef.current = false;
+            });
+          }
         }
       };
 
@@ -457,7 +465,8 @@ export default function App() {
   }, [callMessages]);
 
   const processCallMessage = useCallback(async (text: string) => {
-    // BUG FIX: update ref immediately to prevent race condition on rapid speech
+    console.log('[Call] processCallMessage: "' + text.substring(0, 50) + '"');
+    // Update ref immediately to prevent race condition on rapid speech
     const userMsg = { role: 'user' as const, content: text };
     const updatedMessages = [...callMessagesRef.current, userMsg];
     callMessagesRef.current = updatedMessages; // update ref NOW, not after render
@@ -495,6 +504,7 @@ export default function App() {
     // Speak the AI response via TTS.
     // Now uses native Android TTS via CassideyNative bridge (reliable).
     // A 500ms delay gives Android time to release audio focus from the mic.
+    console.log('[Call] Speaking response: "' + response.substring(0, 50) + '..." (' + response.length + ' chars)');
     let micResumed = false;
     const resumeMic = () => {
       if (micResumed) return;
@@ -524,8 +534,8 @@ export default function App() {
   useEffect(() => { processCallMessageRef.current = processCallMessage; }, [processCallMessage]);
 
   const startCall = useCallback(() => {
-    // BUG FIX: Wake up speech synthesis engine during user gesture context.
-    // This cancel+resume activates the TTS audio pipeline on Android WebView.
+    console.log('[Call] Starting call — native bridge:', !!(window as any).CassideyNative);
+    // Initialize speech synthesis (sets up events, checks TTS ready, reinit if needed)
     initSpeechSynthesis();
 
     setIsCallActive(true);

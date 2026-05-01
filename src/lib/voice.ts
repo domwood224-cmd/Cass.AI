@@ -554,10 +554,17 @@ function getNativeBridge(): any {
   return (window as any).CassideyNative;
 }
 
-/** Check if native TTS is available and ready */
+/** Check if native TTS bridge is available (Java object exists) */
 function isNativeTtsAvailable(): boolean {
   const bridge = getNativeBridge();
   return !!(bridge && typeof bridge.speakTts === 'function');
+}
+
+/** Check if native TTS engine is initialized and ready to speak */
+function isNativeTtsReady(): boolean {
+  const bridge = getNativeBridge();
+  if (!bridge || typeof bridge.isTtsReady !== 'function') return false;
+  try { return bridge.isTtsReady() === 'true'; } catch { return false; }
 }
 
 /** Listen for native TTS events (dispatched from Java via CustomEvent) */
@@ -570,21 +577,43 @@ function setupNativeTtsEvents(): void {
   nativeTtsEventsSetup = true;
 
   window.addEventListener('nativeTtsStart', () => {
+    console.log('[Voice] nativeTtsStart event received');
     isSpeaking = true;
     nativeTtsStartCallback?.();
   });
 
   window.addEventListener('nativeTtsEnd', () => {
+    console.log('[Voice] nativeTtsEnd event received');
     isSpeaking = false;
     nativeTtsEndCallback?.();
+  });
+
+  window.addEventListener('nativeTtsError', ((e: any) => {
+    console.warn('[Voice] nativeTtsError event:', e.detail || 'unknown error');
+  }) as EventListener);
+
+  window.addEventListener('nativeTtsReady', () => {
+    console.log('[Voice] nativeTtsReady event received — TTS engine initialized');
   });
 }
 
 /** Initialize speech synthesis (warm up native TTS engine) */
 export function initSpeechSynthesis(): void {
-  // For native TTS, the engine initializes in onCreate.
-  // Just ensure event listeners are set up.
   setupNativeTtsEvents();
+  const bridge = getNativeBridge();
+
+  if (bridge) {
+    const ready = isNativeTtsReady();
+    console.log('[Voice] initSpeechSynthesis: bridge=' + !!bridge + ' ttsReady=' + ready);
+
+    // If TTS engine failed to initialize, try reinitializing
+    if (!ready && typeof bridge.reinitTts === 'function') {
+      console.log('[Voice] TTS not ready, requesting reinit...');
+      try { bridge.reinitTts(); } catch {}
+    }
+  } else {
+    console.log('[Voice] initSpeechSynthesis: no native bridge — will use Web Speech API');
+  }
 }
 
 /** Check if speech synthesis is available (native or Web Speech API) */
@@ -620,6 +649,33 @@ export function getIsSpeaking(): boolean {
 }
 
 /**
+ * Wait for native TTS to become ready (max wait time).
+ * Returns true if TTS became ready, false if timed out.
+ */
+function waitForNativeTtsReady(maxWaitMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (isNativeTtsReady()) {
+      resolve(true);
+      return;
+    }
+
+    const startTime = Date.now();
+    const checkInterval = setInterval(() => {
+      if (isNativeTtsReady()) {
+        clearInterval(checkInterval);
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startTime > maxWaitMs) {
+        clearInterval(checkInterval);
+        console.warn('[Voice] Timed out waiting for native TTS (' + maxWaitMs + 'ms)');
+        resolve(false);
+      }
+    }, 200);
+  });
+}
+
+/**
  * Speak text using a voice profile.
  * Uses native Android TTS when available (reliable), falls back to Web Speech API.
  */
@@ -637,15 +693,14 @@ export function speak(
   }
 
   const cleanText = text.trim();
+  const profile = getVoiceProfile(voiceProfileId);
+  const pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
+  const rate = speedOverride !== undefined ? speedOverride : profile.rate;
+  const volume = profile.volume;
 
   // ── Primary: Native Android TTS ──
   if (isNativeTtsAvailable()) {
     setupNativeTtsEvents();
-
-    const profile = getVoiceProfile(voiceProfileId);
-    const pitch = pitchOverride !== undefined ? pitchOverride : profile.pitch;
-    const rate = speedOverride !== undefined ? speedOverride : profile.rate;
-    const volume = profile.volume;
 
     nativeTtsEndCallback = () => {
       nativeTtsEndCallback = null;
@@ -657,31 +712,69 @@ export function speak(
     };
 
     const bridge = getNativeBridge();
-    try {
-      bridge.speakTts(cleanText, pitch, rate, volume);
-      isSpeaking = true; // Optimistic — nativeTtsStart event confirms
 
-      // Safety timeout: if native TTS doesn't fire events within 60s, auto-complete
-      setTimeout(() => {
-        if (isSpeaking && nativeTtsEndCallback) {
-          console.warn('[Voice] Native TTS safety timeout — forcing onEnd');
-          isSpeaking = false;
-          const cb = nativeTtsEndCallback;
-          nativeTtsEndCallback = null;
-          nativeTtsStartCallback = null;
-          cb?.();
-        }
-      }, 60000);
-    } catch (e) {
-      console.warn('[Voice] Native TTS failed, falling back to Web Speech API:', e);
-      isSpeaking = false;
-      speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+    // Check if TTS engine is ready right now
+    if (isNativeTtsReady()) {
+      // Ready — speak immediately
+      const result = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
+      if (result === 'ok') {
+        isSpeaking = true;
+        // Safety timeout: if native TTS doesn't fire events within 60s, auto-complete
+        startSafetyTimeout();
+        return;
+      }
     }
+
+    // TTS not ready yet — wait for it with retries
+    console.log('[Voice] Native TTS not ready, waiting...');
+    waitForNativeTtsReady(3000).then((ready) => {
+      if (ready) {
+        console.log('[Voice] Native TTS ready after wait — speaking now');
+        const result = tryNativeSpeak(bridge, cleanText, pitch, rate, volume);
+        if (result === 'ok') {
+          isSpeaking = true;
+          startSafetyTimeout();
+          return;
+        }
+      }
+      // Still not ready or speak failed — fall back to Web Speech API
+      console.warn('[Voice] Native TTS not available, falling back to Web Speech API');
+      isSpeaking = false;
+      nativeTtsEndCallback = null;
+      nativeTtsStartCallback = null;
+      speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+    });
     return;
   }
 
   // ── Fallback: Web Speech API ──
   speakWebApi(cleanText, voiceProfileId, onEnd, onStart, speedOverride, pitchOverride);
+}
+
+/** Try to call native speakTts. Returns "ok" or "not_ready". */
+function tryNativeSpeak(bridge: any, text: string, pitch: number, rate: number, volume: number): string {
+  try {
+    const result = bridge.speakTts(text, pitch, rate, volume);
+    console.log('[Voice] speakTts returned: ' + result);
+    return result || 'ok';
+  } catch (e) {
+    console.error('[Voice] speakTts threw:', e);
+    return 'error';
+  }
+}
+
+/** Start a safety timeout that forces onEnd if native TTS events don't fire */
+function startSafetyTimeout() {
+  setTimeout(() => {
+    if (isSpeaking && nativeTtsEndCallback) {
+      console.warn('[Voice] Native TTS safety timeout (60s) — forcing onEnd');
+      isSpeaking = false;
+      const cb = nativeTtsEndCallback;
+      nativeTtsEndCallback = null;
+      nativeTtsStartCallback = null;
+      cb?.();
+    }
+  }, 60000);
 }
 
 /**
@@ -757,6 +850,12 @@ export function loadVoices(): Promise<SpeechSynthesisVoice[]> {
       return;
     }
 
+    if (isNativeTtsAvailable()) {
+      // Native TTS doesn't use system voices
+      resolve([]);
+      return;
+    }
+
     const voices = window.speechSynthesis.getVoices();
     if (voices.length > 0) {
       resolve(voices);
@@ -777,6 +876,7 @@ export function loadVoices(): Promise<SpeechSynthesisVoice[]> {
 
 /** Get the count of system voices available */
 export function getSystemVoiceCount(): number {
+  if (isNativeTtsAvailable()) return 1; // Native TTS counts as 1
   if (!isSpeechAvailable()) return 0;
   return window.speechSynthesis.getVoices().length;
 }
